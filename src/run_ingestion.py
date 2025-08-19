@@ -1,0 +1,79 @@
+import os
+import pprint
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+import asyncio
+from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
+
+from core.ingestion_engine import ConcurrentDefenderIngestionWithChunking
+
+load_dotenv()
+
+bootstrap = {
+    "adx_cluster_uri": "https://kvc-t4efc4mq1p8d6sdfm5.southcentralus.kusto.windows.net",
+    "adx_ingest_uri": "https://ingest-kvc-t4efc4mq1p8d6sdfm5.southcentralus.kusto.windows.net",
+    "adx_database": "db1",
+    "defender_resource_uri":"https://api.security.microsoft.com",
+    "defender_hunting_api_url": "https://api.security.microsoft.com/api/advancedhunting/run",
+    "config_table": "MigrationConfiguration",
+    "audit_table": "MigrationAudit",
+    "clientId": os.getenv("AZURE_CLIENT_ID"),
+    "clientSecret": os.getenv("AZURE_CLIENT_SECRET"),
+    "tenantId": os.getenv("AZURE_TENANT_ID"),
+}
+
+def setup_kusto_clients(bootstrap):
+    """Setup Kusto clients for querying metadata"""
+    kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
+        bootstrap["adx_cluster_uri"],
+        bootstrap["clientId"],
+        bootstrap["clientSecret"],
+        bootstrap["tenantId"]
+    )
+    
+    kusto_client = KustoClient(kcsb)
+    
+    return kusto_client
+
+def fetch_migration_config(kusto_client, bootstrap):
+    """Fetch the latest migration configuration from ADX"""
+    print("[INFO] --> Fetching migration configuration from ADX...")
+    
+    response_config = kusto_client.execute(
+        bootstrap["adx_database"], 
+        bootstrap["config_table"]
+    )
+    
+    print(f"[INFO] --> Retrieved configuration for migration")
+
+    return response_config
+
+async def main():
+    now = datetime.now(timezone.utc)
+    kusto_ingest_datetime = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    bootstrap["ingestion_start_time"] = kusto_ingest_datetime
+
+    kusto_client = setup_kusto_clients(bootstrap)
+
+    response_config = fetch_migration_config(kusto_client, bootstrap)
+
+    table = response_config.primary_results[0]
+    table_configs = [row.to_dict() for row in table if row["IsActive"]]
+
+    if table_configs:
+        print(f"[INFO] --> Found {len(table_configs)} active tables for migration")
+
+        ingestion_handler = ConcurrentDefenderIngestionWithChunking(
+            bootstrap=bootstrap,
+            max_concurrent_tasks=5,  # Lower when chunking
+            chunk_size=25000
+        )
+
+        summary = await ingestion_handler.process_all_tables(table_configs)
+        pprint.pprint(summary)
+    else:
+        print("[INFO] --> No active tables found for migration")
+
+if __name__ == "__main__":
+    asyncio.run(main())
