@@ -14,6 +14,9 @@ from azure.kusto.data.data_format import DataFormat
 from azure.kusto.ingest import QueuedIngestClient, IngestionProperties, IngestionMappingKind, ReportLevel
 from azure.kusto.ingest.status import KustoIngestStatusQueues
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
 
 class ConcurrentDefenderIngestionWithChunking:
     def __init__(self, bootstrap: Dict[str, Any], max_concurrent_tasks: int = 3, chunk_size: int = 25000):
@@ -38,6 +41,9 @@ class ConcurrentDefenderIngestionWithChunking:
         self.token_lock = asyncio.Lock()
 
         self.update_lock = asyncio.Lock()
+
+        self.max_thread_workers = 8
+        self.thread_pool = ThreadPoolExecutor(max_workers=self.max_thread_workers)
 
     def _create_adx_ingest_client(self):
         kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
@@ -224,19 +230,13 @@ class ConcurrentDefenderIngestionWithChunking:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    async def ingest_to_adx(self, session: aiohttp.ClientSession, table_config: Dict[str, Any], records: List[Dict], destination_tbl: str, watermark_column: str) -> None:
-        print("[FUNCTION] --> ingest_to_adx")
-
-        if not table_config["HighWatermark"] and not table_config["LastRefreshedTime"]:
-            await self.ensure_table_exists(destination_tbl, watermark_column)
-
+    def _sync_ingest_data(self, records: List[Dict], destination_tbl: str) -> None:
+        """Synchronous data ingestion - runs in thread pool"""
         try:
-            # ingest_client = self._create_adx_ingest_client()
             
+            # CPU-intensive JSON serialization
             data_as_str = "\n".join(json.dumps(r) for r in records)
             data_stream = StringIO(data_as_str)
-
-            print(f"[INFO] --> Ingesting {len(records)} records to {destination_tbl}...")
             
             ingestion_props = IngestionProperties(
                 database=self.bootstrap["adx_database"],
@@ -246,12 +246,51 @@ class ConcurrentDefenderIngestionWithChunking:
                 ingestion_mapping_reference="RawDataMap",
             )
             
+            # Blocking I/O operation
             self.ingest_client.ingest_from_stream(data_stream, ingestion_props)
+            print(f"[INFO] --> Successfully ingested {len(records)} records to {destination_tbl}")
+            
+        except Exception as e:
+            print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
+            raise
+
+    async def ingest_to_adx(self, session: aiohttp.ClientSession, table_config: Dict[str, Any], records: List[Dict], destination_tbl: str, watermark_column: str) -> None:
+        print("[FUNCTION] --> ingest_to_adx")
+
+        # if not table_config["HighWatermark"] and not table_config["LastRefreshedTime"]:
+        #     await self.ensure_table_exists(destination_tbl, watermark_column)
+
+        try:
+            # ingest_client = self._create_adx_ingest_client()
+            
+            # data_as_str = "\n".join(json.dumps(r) for r in records)
+            # data_stream = StringIO(data_as_str)
+
+            # print(f"[INFO] --> Ingesting {len(records)} records to {destination_tbl}...")
+            
+            # ingestion_props = IngestionProperties(
+            #     database=self.bootstrap["adx_database"],
+            #     table=destination_tbl,
+            #     data_format=DataFormat.JSON,
+            #     ingestion_mapping_kind=IngestionMappingKind.JSON,
+            #     ingestion_mapping_reference="RawDataMap",
+            # )
+            
+            # self.ingest_client.ingest_from_stream(data_stream, ingestion_props)
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                self.thread_pool,
+                self._sync_ingest_data,
+                records,
+                destination_tbl
+            )
+
             print(f"[INFO] --> Successfully ingested to {destination_tbl}")
 
-            max_timestamp = max(item[watermark_column] for item in records)
+            # max_timestamp = max(item[watermark_column] for item in records)
 
-            await self.update_high_watermark(session, table_config, max_timestamp)
+            # await self.update_high_watermark(session, table_config, max_timestamp)
             
         except Exception as e:
             print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
@@ -385,6 +424,38 @@ class ConcurrentDefenderIngestionWithChunking:
                 "error": str(e),
                 "records_processed": 0
             }
+        
+    async def process_multiple_chunks_parallel(self, session: aiohttp.ClientSession, 
+                                             table_config: Dict[str, Any], 
+                                             base_query: str, 
+                                             num_chunks: int) -> List[Dict[str, Any]]:
+        """Process multiple chunks with a hybrid approach"""
+        
+        # Group chunks into batches for thread pool processing
+        batch_size = min(self.max_thread_workers, num_chunks)
+        chunk_batches = [
+            list(range(i, min(i + batch_size, num_chunks))) 
+            for i in range(0, num_chunks, batch_size)
+        ]
+        
+        all_results = []
+        
+        for batch_indices in chunk_batches:
+            # Process batch of chunks concurrently
+            batch_tasks = [
+                self.process_single_chunk(session, table_config, base_query, chunk_idx, num_chunks)
+                for chunk_idx in batch_indices
+            ]
+            
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            all_results.extend(batch_results)
+            
+            # Small delay between batches to prevent overwhelming the system
+            if len(chunk_batches) > 1:
+                await asyncio.sleep(1)
+        
+        return all_results
+
     
     async def process_single_table(self, session: aiohttp.ClientSession, table_config: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single table with chunking support and better error isolation"""
@@ -455,16 +526,20 @@ class ConcurrentDefenderIngestionWithChunking:
                     # ]
                     # chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
 
-                    chunk_results = []
-                    for i in range(num_chunks):
-                        result = await self.process_single_chunk(session, table_config, base_query, i, num_chunks)
-                        chunk_results.append(result)
+                    # chunk_results = []
+                    # for i in range(num_chunks):
+                    #     result = await self.process_single_chunk(session, table_config, base_query, i, num_chunks)
+                    #     chunk_results.append(result)
 
                     # Wait for ingestion to complete
                     # await asyncio.sleep(180)
 
                     # # Update watermark
                     # await self.update_high_watermark(session, table_config)
+
+                    chunk_results = await self.process_multiple_chunks_parallel(
+                        session, table_config, base_query, num_chunks
+                    )
                     
                     # Analyze chunk results
                     successful_chunks = sum(1 for r in chunk_results if isinstance(r, dict) and r.get("success"))
