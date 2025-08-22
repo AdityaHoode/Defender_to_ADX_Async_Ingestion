@@ -154,7 +154,7 @@ class ConcurrentDefenderIngestionWithChunking:
             return f"{source_tbl} | where {watermark_column} > datetime('{formatted_ts}')"
     
     def build_chunked_kql_query(self, base_query: str, watermark_column: str, chunk_index: int, chunk_size: int) -> str:
-        start_rownum = chunk_index * chunk_size
+        start_rownum = (chunk_index-1) * chunk_size
         end_rownum = start_rownum + chunk_size
         return f"{base_query} | sort by {watermark_column} asc | extend RowNum = row_number() | where RowNum between ({start_rownum+1} .. {end_rownum})"
 
