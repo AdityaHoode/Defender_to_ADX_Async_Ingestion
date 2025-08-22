@@ -1,7 +1,8 @@
 import os
+import uuid
 import pprint
-from datetime import datetime, timezone
 from dotenv import load_dotenv
+from datetime import datetime, timezone
 
 import asyncio
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
@@ -53,6 +54,8 @@ async def main():
     now = datetime.now(timezone.utc)
     kusto_ingest_datetime = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     bootstrap["ingestion_start_time"] = kusto_ingest_datetime
+
+    bootstrap["ingestion_id"] = str(uuid.uuid4())
 
     kusto_client = setup_kusto_clients(bootstrap)
 

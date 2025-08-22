@@ -222,17 +222,12 @@ class ConcurrentDefenderIngestionWithChunking:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    async def update_high_watermark(self, session: aiohttp.ClientSession, table_config: Dict[str, Any], max_timestamp: str) -> None:
+    async def meta_update_high_watermark(self, session: aiohttp.ClientSession, table_config: Dict[str, Any], max_timestamp: str) -> None:
         async with self.update_lock:
             source_tbl = table_config["SourceTable"]
             destination_tbl = table_config["DestinationTable"]
             
             try:
-                # Use fresh data client for watermark operations
-                # data_client = self._create_adx_data_client()
-                
-                # max_cmd = f"{destination_tbl} | summarize max({watermark_column}) | project max_timestamp = max_{watermark_column}"
-                # max_timestamp = self.data_client.execute(self.bootstrap["adx_database"], max_cmd).primary_results[0][0]["max_timestamp"]
                 print(f"[INFO] --> Retrieved high watermark for {destination_tbl}: {max_timestamp}")
 
                 update_cmd_1 = f"""
@@ -271,6 +266,133 @@ class ConcurrentDefenderIngestionWithChunking:
             except Exception as e:
                 print(f"[ERROR] --> Error updating watermark for {destination_tbl}: {str(e)}")
                 raise
+
+    def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
+        insert_values = []
+        for data in ingestion_results:
+            print(f"Table: {data['table']}")
+            error_val = '""' if data["error"] is None else f'"{data["error"]}"'
+            if data.get('chunk_results'):
+                chunk_results = json.dumps(data['chunk_results']).replace('"', '\\"')
+                chunk_results = f'dynamic({json.dumps(data["chunk_results"])})'
+            else:
+                chunk_results = 'dynamic([])'
+            insert_values.append(
+                f'"{ingestion_id}", datetime({ingestion_start_time}), "{data["table"]}", {str(data["success"]).lower()}, '
+                f'{data["records_processed"]}, {data["chunked"]}, {data["chunks_processed"]}, {data["chunks_failed"]}, '
+                f'{chunk_results}, {error_val}'
+            )
+            insert_values_str = ",\n    ".join(insert_values)
+
+        kql_command = f"""
+        .set-or-append meta_MigrationAudit <|
+        datatable(ingestion_id:string, ingestion_timestamp: datetime, table: string, success: bool, records_processed: long, chunked: bool, chunks_processed: int, chunks_failed: int, chunk_results: dynamic, error: string)
+        [
+        {insert_values_str}
+        ]"""
+
+        try:
+            self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
+        except Exception as e:
+            print(f"Error inserting audit records: {e}")
+            raise
+
+    def meta_insert_chunk_failures(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
+        insert_values = []
+        for data in ingestion_results:
+            if data.get("chunk_results"):
+                print(f"Table: {data['table']}")
+                for r in data["chunk_results"]:
+                    if r["success"]:
+                        error_val = '""' if r['error'] is None else f'"{r["error"]}"'
+                        insert_values.append(
+                            f'"{ingestion_id}", datetime({ingestion_start_time}), '
+                            f'"{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
+                            f'{r["records_count"]}, {r["records_processed"]}, '
+                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), {error_val}'
+                        )
+                insert_values_str = ",\n    ".join(insert_values)
+
+        kql_command = f"""
+        .set-or-append meta_ChunkIngestionFailures <|
+        datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string)
+        [
+        {insert_values_str}
+        ]"""
+
+        try:
+            self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
+        except Exception as e:
+            print(f"Error inserting audit records: {e}")
+            raise
+
+    def analyze_results(self, table_configs: List[Dict[str, Any]], ingestion_results: List[Dict[str, Any]], execution_time: float) -> Dict[str, Any]:
+        successful_tables = 0
+        failed_tables = 0
+        total_records_processed = 0
+        total_chunks_processed = 0
+        total_chunks_failed = 0
+        exceptions = []
+        detailed_results = []
+        
+        for i, result in enumerate(ingestion_results):
+            table_name = table_configs[i]["SourceTable"]
+            
+            if isinstance(result, Exception):
+                print(f"[ERROR] --> Exception in {table_name}: {str(result)}")
+                exceptions.append(f"{table_name}: {str(result)}")
+                failed_tables += 1
+                detailed_results.append({
+                    "table": table_name,
+                    "success": False,
+                    "error": str(result)
+                })
+            elif isinstance(result, dict):
+                detailed_results.append(result)
+                if result.get("success"):
+                    successful_tables += 1
+                    print(f"[SUCCESS] --> {table_name}: {result.get('records_processed', 0)} records")
+                else:
+                    failed_tables += 1
+                    print(f"[ERROR] --> {table_name}: {result.get('error', 'Unknown error')}")
+                
+                total_records_processed += result.get("records_processed", 0)
+                total_chunks_processed += result.get("chunks_processed", 0)
+                total_chunks_failed += result.get("chunks_failed", 0)
+                
+                if result.get("error"):
+                    exceptions.extend([f"{table_name}: {e}" for e in result["error"]])
+                
+        summary = {
+            "total_tables": len(table_configs),
+            "successful_tables": successful_tables,
+            "failed_tables": failed_tables,
+            "total_records_processed": total_records_processed,
+            "total_chunks_processed": total_chunks_processed,
+            "total_chunks_failed": total_chunks_failed,
+            "execution_time_seconds": execution_time,
+            "exceptions": exceptions,
+            "detailed_results": detailed_results,
+            "chunking_enabled": True,
+            "chunk_size": self.chunk_size
+        }
+        
+        print(f"\n" + f"="*100)
+        print(f"PROCESSING COMPLETED")
+        print(f"="*100)
+        print(f"Execution time: {execution_time:.2f} seconds")
+        print(f"Tables - Successful: {successful_tables}, Failed: {failed_tables}")
+        print(f"Records processed: {total_records_processed:,}")
+        print(f"Chunks - Successful: {total_chunks_processed}, Failed: {total_chunks_failed}")
+        
+        if exceptions:
+            print(f"\nErrors encountered:")
+            for error in exceptions[:5]:  # Show first 5 errors
+                print(f"  - {error}")
+            if len(exceptions) > 5:
+                print(f"  ... and {len(exceptions) - 5} more errors")
+
+        return summary
 
     def _sync_ingest_data(self, records: List[Dict], chunk_index: int, destination_tbl: str, low_watermark: str, high_watermark: str) -> None:
         """Synchronous data ingestion - runs in thread pool"""
@@ -519,7 +641,8 @@ class ConcurrentDefenderIngestionWithChunking:
                         "records_processed": 0,
                         "chunks_processed": 0,
                         "chunks_failed": 0,
-                        "chunked": False
+                        "chunked": False,
+                        "error": None
                     }
 
                 needs_chunking = total_records > self.chunk_size
@@ -606,15 +729,16 @@ class ConcurrentDefenderIngestionWithChunking:
                     "chunked": False,
                     "error": str(e)
                 }
-    
+                
     async def process_all_tables(self, table_configs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process all tables concurrently"""
-        start_time = time.time()
         
         print("-"*80)
         print("[FUNCTION] --> process_all_tables")
         print(f"[INFO] --> Chunk size: {self.chunk_size:,} records")
         print(f"[INFO] --> Max concurrent tasks: {self.max_concurrent_tasks}")
+
+        start_time = time.time()
 
         for config in table_configs:
             if not config["HighWatermark"] and not config["LastRefreshedTime"]:
@@ -640,73 +764,21 @@ class ConcurrentDefenderIngestionWithChunking:
             # Execute all tasks concurrently with return_exceptions=True
             results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Analyze results
-        successful_tables = 0
-        failed_tables = 0
-        total_records_processed = 0
-        total_chunks_processed = 0
-        total_chunks_failed = 0
-        exceptions = []
-        detailed_results = []
-        
-        for i, result in enumerate(results):
-            table_name = table_configs[i]["SourceTable"]
-            
-            if isinstance(result, Exception):
-                print(f"[ERROR] --> Exception in {table_name}: {str(result)}")
-                exceptions.append(f"{table_name}: {str(result)}")
-                failed_tables += 1
-                detailed_results.append({
-                    "table": table_name,
-                    "success": False,
-                    "error": str(result)
-                })
-            elif isinstance(result, dict):
-                detailed_results.append(result)
-                if result.get("success"):
-                    successful_tables += 1
-                    print(f"[SUCCESS] --> {table_name}: {result.get('records_processed', 0)} records")
-                else:
-                    failed_tables += 1
-                    print(f"[ERROR] --> {table_name}: {result.get('error', 'Unknown error')}")
-                
-                total_records_processed += result.get("records_processed", 0)
-                total_chunks_processed += result.get("chunks_processed", 0)
-                total_chunks_failed += result.get("chunks_failed", 0)
-                
-                if result.get("error"):
-                    exceptions.extend([f"{table_name}: {e}" for e in result["error"]])
-        
         end_time = time.time()
         execution_time = end_time - start_time
+
+        self.meta_insert_audits(
+            self.bootstrap["ingestion_id"],
+            self.bootstrap["ingestion_start_time"],
+            results
+        )
         
-        summary = {
-            "total_tables": len(table_configs),
-            "successful_tables": successful_tables,
-            "failed_tables": failed_tables,
-            "total_records_processed": total_records_processed,
-            "total_chunks_processed": total_chunks_processed,
-            "total_chunks_failed": total_chunks_failed,
-            "execution_time_seconds": execution_time,
-            "exceptions": exceptions,
-            "detailed_results": detailed_results,
-            "chunking_enabled": True,
-            "chunk_size": self.chunk_size
-        }
-        
-        print(f"\n" + f"="*100)
-        print(f"PROCESSING COMPLETED")
-        print(f"="*100)
-        print(f"Execution time: {execution_time:.2f} seconds")
-        print(f"Tables - Successful: {successful_tables}, Failed: {failed_tables}")
-        print(f"Records processed: {total_records_processed:,}")
-        print(f"Chunks - Successful: {total_chunks_processed}, Failed: {total_chunks_failed}")
-        
-        if exceptions:
-            print(f"\nErrors encountered:")
-            for error in exceptions[:5]:  # Show first 5 errors
-                print(f"  - {error}")
-            if len(exceptions) > 5:
-                print(f"  ... and {len(exceptions) - 5} more errors")
+        self.meta_insert_chunk_failures(
+            self.bootstrap["ingestion_id"],
+            self.bootstrap["ingestion_start_time"],
+            results
+        )
+
+        summary = self.analyze_results(results, execution_time)
         
         return summary
