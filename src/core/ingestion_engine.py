@@ -1,8 +1,8 @@
 import time
 import math
 import json
+import requests
 import urllib.parse
-from pprint import pprint
 from io import StringIO
 from datetime import timezone, datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
@@ -16,7 +16,7 @@ from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 from azure.kusto.data.data_format import DataFormat
 from azure.kusto.ingest import QueuedIngestClient, IngestionProperties, IngestionMappingKind, ReportLevel
 from azure.kusto.ingest.status import KustoIngestStatusQueues
-import requests
+
 
 
 class ConcurrentDefenderIngestionWithChunking:
@@ -462,8 +462,8 @@ class ConcurrentDefenderIngestionWithChunking:
         # Group chunks into batches for thread pool processing
         batch_size = min(self.max_thread_workers, num_chunks)
         chunk_batches = [
-            list(range(i, min(i + batch_size, num_chunks))) 
-            for i in range(0, num_chunks, batch_size)
+            list(range(i, min(i + batch_size, num_chunks+1))) 
+            for i in range(1, num_chunks+1, batch_size)
         ]
         
         processed_results = []
@@ -516,7 +516,7 @@ class ConcurrentDefenderIngestionWithChunking:
                     return {
                         "table": destination_tbl,
                         "success": True,
-                        "total_records": 0,
+                        "records_processed": 0,
                         "chunks_processed": 0,
                         "chunks_failed": 0,
                         "chunked": False
@@ -538,7 +538,7 @@ class ConcurrentDefenderIngestionWithChunking:
                     return {
                         "table": result["table"],
                         "success": result["success"],
-                        "total_records": result["records_processed"],
+                        "records_processed": result["records_processed"],
                         "chunks_processed": 1 if result["success"] else 0,
                         "chunks_failed": 0 if result["success"] else 1,
                         "chunked": False,
@@ -568,8 +568,6 @@ class ConcurrentDefenderIngestionWithChunking:
                     chunk_results = await self.process_multiple_chunks_parallel(
                         session, table_config, base_query, num_chunks
                     )
-
-                    pprint(f"[INFO] --> Chunk results: {chunk_results}")
                     
                     successful_chunks = sum(1 for r in chunk_results if isinstance(r, dict) and r.get("success"))
                     failed_chunks = num_chunks - successful_chunks
@@ -589,11 +587,12 @@ class ConcurrentDefenderIngestionWithChunking:
                     return {
                         "table": destination_tbl,
                         "success": failed_chunks == 0,
-                        "total_records": total_records_processed,
+                        "records_processed": total_records_processed,
                         "chunks_processed": successful_chunks,
                         "chunks_failed": failed_chunks,
                         "chunked": True,
-                        "errors": errors if errors else None
+                        "chunk_results": chunk_results,
+                        "error": errors if errors else None
                     }
                     
             except Exception as e:
@@ -601,7 +600,7 @@ class ConcurrentDefenderIngestionWithChunking:
                 return {
                     "table": source_tbl,
                     "success": False,
-                    "total_records": 0,
+                    "records_processed": 0,
                     "chunks_processed": 0,
                     "chunks_failed": 0,
                     "chunked": False,
@@ -666,17 +665,17 @@ class ConcurrentDefenderIngestionWithChunking:
                 detailed_results.append(result)
                 if result.get("success"):
                     successful_tables += 1
-                    print(f"[SUCCESS] --> {table_name}: {result.get('total_records', 0)} records")
+                    print(f"[SUCCESS] --> {table_name}: {result.get('records_processed', 0)} records")
                 else:
                     failed_tables += 1
                     print(f"[ERROR] --> {table_name}: {result.get('error', 'Unknown error')}")
                 
-                total_records_processed += result.get("total_records", 0)
+                total_records_processed += result.get("records_processed", 0)
                 total_chunks_processed += result.get("chunks_processed", 0)
                 total_chunks_failed += result.get("chunks_failed", 0)
                 
-                if result.get("errors"):
-                    exceptions.extend([f"{table_name}: {e}" for e in result["errors"]])
+                if result.get("error"):
+                    exceptions.extend([f"{table_name}: {e}" for e in result["error"]])
         
         end_time = time.time()
         execution_time = end_time - start_time
