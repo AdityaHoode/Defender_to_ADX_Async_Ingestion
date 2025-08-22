@@ -270,7 +270,6 @@ class ConcurrentDefenderIngestionWithChunking:
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
         for data in ingestion_results:
-            print(f"Table: {data['table']}")
             error_val = '""' if data["error"] is None else f'"{data["error"]}"'
             if data.get('chunk_results'):
                 chunk_results = json.dumps(data['chunk_results']).replace('"', '\\"')
@@ -301,9 +300,8 @@ class ConcurrentDefenderIngestionWithChunking:
         insert_values = []
         for data in ingestion_results:
             if data.get("chunk_results"):
-                print(f"Table: {data['table']}")
                 for r in data["chunk_results"]:
-                    if r["success"]:
+                    if not r["success"]:
                         error_val = '""' if r['error'] is None else f'"{r["error"]}"'
                         insert_values.append(
                             f'"{ingestion_id}", datetime({ingestion_start_time}), '
@@ -312,19 +310,20 @@ class ConcurrentDefenderIngestionWithChunking:
                             f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), {error_val}'
                         )
                 insert_values_str = ",\n    ".join(insert_values)
+        
+        if insert_values != []:
+            kql_command = f"""
+            .set-or-append meta_ChunkIngestionFailures <|
+            datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string)
+            [
+            {insert_values_str}
+            ]"""
 
-        kql_command = f"""
-        .set-or-append meta_ChunkIngestionFailures <|
-        datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string)
-        [
-        {insert_values_str}
-        ]"""
-
-        try:
-            self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
-        except Exception as e:
-            print(f"Error inserting audit records: {e}")
-            raise
+            try:
+                self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
+            except Exception as e:
+                print(f"Error inserting chunk failure records: {e}")
+                raise
 
     def analyze_results(self, table_configs: List[Dict[str, Any]], ingestion_results: List[Dict[str, Any]], execution_time: float) -> Dict[str, Any]:
         successful_tables = 0
@@ -477,7 +476,7 @@ class ConcurrentDefenderIngestionWithChunking:
             )
 
             if not chunk_result["success"]:
-                print(f"[ERROR] --> Ingestion failed for {destination_tbl} chunk {chunk_index+1}: {chunk_result['error']}")
+                print(f"[ERROR] --> Ingestion failed for {destination_tbl} chunk {chunk_index}: {chunk_result['error']}")
             else:
                 print(f"[INFO] --> Successfully ingested to {destination_tbl}")
             
@@ -520,7 +519,7 @@ class ConcurrentDefenderIngestionWithChunking:
             else:
                 chunked_query = self.build_chunked_kql_query(base_query, watermark_column, chunk_index, self.chunk_size)
             
-            print(f"[INFO] --> Processing {source_tbl} chunk {chunk_index+1}/{total_chunks}")
+            print(f"[INFO] --> Processing {source_tbl} chunk {chunk_index}/{total_chunks}")
             
             # Get fresh token for this request
             defender_token = await self.get_defender_token(session)
@@ -558,9 +557,9 @@ class ConcurrentDefenderIngestionWithChunking:
                 chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
                 
                 if not chunk_result["success"]:
-                    print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index + 1}/{total_chunks}: {chunk_result['error']}")
+                    print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
                 else:
-                    print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index + 1}/{total_chunks} - {len(records):,} records")
+                    print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index}/{total_chunks} - {len(records):,} records")
 
                 return chunk_result
                 
@@ -772,13 +771,13 @@ class ConcurrentDefenderIngestionWithChunking:
             self.bootstrap["ingestion_start_time"],
             results
         )
-        
+
         self.meta_insert_chunk_failures(
             self.bootstrap["ingestion_id"],
             self.bootstrap["ingestion_start_time"],
             results
         )
 
-        summary = self.analyze_results(results, execution_time)
+        summary = self.analyze_results(table_configs, results, execution_time)
         
         return summary
