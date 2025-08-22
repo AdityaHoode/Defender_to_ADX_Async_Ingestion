@@ -536,7 +536,7 @@ class ConcurrentDefenderIngestionWithChunking:
                     # await self.update_high_watermark(session, table_config)
                     
                     return {
-                        "table": result["destination_tbl"],
+                        "table": result["table"],
                         "success": result["success"],
                         "total_records": result["records_processed"],
                         "chunks_processed": 1 if result["success"] else 0,
