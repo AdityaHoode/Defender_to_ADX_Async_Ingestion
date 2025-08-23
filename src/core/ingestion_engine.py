@@ -637,13 +637,7 @@ class ConcurrentDefenderIngestionWithChunking:
                 if not needs_chunking:
                     print(f"[INFO] --> {source_tbl} has {total_records:,} records - processing without chunking")
                     
-                    result = await self.process_single_chunk(session, table_config, base_query, 0, num_chunks, True)
-                    
-                    # # Wait for ingestion to complete
-                    # await asyncio.sleep(180)
-
-                    # # Update watermark
-                    # await self.update_high_watermark(session, table_config)
+                    result = await self.process_single_chunk(session, table_config, base_query, 1, num_chunks, True)
                     
                     return {
                         "table": result["table"],
