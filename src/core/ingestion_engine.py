@@ -228,7 +228,7 @@ class ConcurrentDefenderIngestionWithChunking:
                 try:
                     min_low_watermark, max_high_watermark = r["chunk_results"][0]["low_watermark"], r["chunk_results"][-1]["high_watermark"]
 
-                    print(f"[INFO] --> Retrieved high watermark for {r["table"]}")
+                    print(f"[INFO] --> Retrieved high watermark for {r['table']}")
 
                     update_cmd_1 = f"""
                         .update table {self.bootstrap["config_table"]} delete D append A <|
@@ -251,13 +251,13 @@ class ConcurrentDefenderIngestionWithChunking:
                     self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
                         
                 except Exception as e:
-                    print(f"[ERROR] --> Error updating watermark for {r["table"]}: {str(e)}")
+                    print(f"[ERROR] --> Error updating watermark for {r['table']}: {str(e)}")
                     raise
 
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
         for data in ingestion_results:
-            error_val = '""' if data["error"] is None else f'"{data["error"]}"'
+            error_val = '""' if data["error"] is None else str(data["error"]).replace('"', "")
             if data.get('chunk_results'):
                 chunk_results = json.dumps(data['chunk_results']).replace('"', '\\"')
                 chunk_results = f'dynamic({json.dumps(data["chunk_results"])})'
@@ -266,7 +266,7 @@ class ConcurrentDefenderIngestionWithChunking:
             insert_values.append(
                 f'"{ingestion_id}", datetime({ingestion_start_time}), "{data["table"]}", {str(data["success"]).lower()}, '
                 f'{data["records_processed"]}, {data["chunked"]}, {data["chunks_processed"]}, {data["chunks_failed"]}, '
-                f'{chunk_results}, {error_val}'
+                f'{chunk_results}, "{error_val}"'
             )
             insert_values_str = ",\n    ".join(insert_values)
 
@@ -289,12 +289,12 @@ class ConcurrentDefenderIngestionWithChunking:
             if data.get("chunk_results"):
                 for r in data["chunk_results"]:
                     if not r["success"]:
-                        error_val = '""' if r['error'] is None else f'"{r["error"]}"'
+                        error_val = '""' if r["error"] is None else str(r["error"]).replace('"', "")
                         insert_values.append(
                             f'"{ingestion_id}", datetime({ingestion_start_time}), '
                             f'"{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
                             f'{r["records_count"]}, {r["records_processed"]}, '
-                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), {error_val}'
+                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), "{error_val}"'
                         )
                 insert_values_str = ",\n    ".join(insert_values)
         
@@ -651,7 +651,7 @@ class ConcurrentDefenderIngestionWithChunking:
                         "chunks_processed": 1 if result["success"] else 0,
                         "chunks_failed": 0 if result["success"] else 1,
                         "chunked": False,
-                        "chunk_results": result,
+                        "chunk_results": list(result),
                         "error": result.get("error", None)
                     }
                 else:
@@ -749,6 +749,8 @@ class ConcurrentDefenderIngestionWithChunking:
         
         end_time = time.time()
         execution_time = end_time - start_time
+
+        print(results)
 
         self.meta_insert_audits(
             self.bootstrap["ingestion_id"],
