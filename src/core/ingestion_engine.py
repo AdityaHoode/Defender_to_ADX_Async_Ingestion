@@ -222,50 +222,40 @@ class ConcurrentDefenderIngestionWithChunking:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    async def meta_update_high_watermark(self, session: aiohttp.ClientSession, table_config: Dict[str, Any], max_timestamp: str) -> None:
-        async with self.update_lock:
-            source_tbl = table_config["SourceTable"]
-            destination_tbl = table_config["DestinationTable"]
-            
-            try:
-                print(f"[INFO] --> Retrieved high watermark for {destination_tbl}: {max_timestamp}")
+    async def meta_update_high_watermark(self, table_config: Dict[str, Any], ingestion_results: Dict[str, Any]) -> None:
+        source_tbl = table_config["SourceTable"]
+        destination_tbl = table_config["DestinationTable"]
 
-                update_cmd_1 = f"""
-                    .update table {self.bootstrap["config_table"]} delete D append A <|
-                        let D = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
-                        let A = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
-                        | extend HighWatermark=datetime('{max_timestamp}');
-                """
-                update_cmd_2 = f"""
-                    .update table {self.bootstrap["config_table"]} delete D append A <|
-                        let D = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
-                        let A = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
-                        | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
-                """
+        # insert_values = []
+        # for data in ingestion_results:
+        #     if data["chunked"]:
+        #         if data["success"]:
+        try:
+            print(f"[INFO] --> Retrieved high watermark for {destination_tbl}: {max_timestamp}")
 
-                adx_token = await self.get_adx_token(session)
-                adx_ingest_uri = f"{self.bootstrap['adx_cluster_uri']}/v1/rest/mgmt"
-                adx_headers = {"Authorization": f"Bearer {adx_token}", "Content-Type": "application/json"}
+            update_cmd_1 = f"""
+                .update table {self.bootstrap["config_table"]} delete D append A <|
+                    let D = {self.bootstrap["config_table"]}
+                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
+                    let A = {self.bootstrap["config_table"]}
+                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
+                    | extend HighWatermark=datetime('{max_timestamp}');
+            """
+            update_cmd_2 = f"""
+                .update table {self.bootstrap["config_table"]} delete D append A <|
+                    let D = {self.bootstrap["config_table"]}
+                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
+                    let A = {self.bootstrap["config_table"]}
+                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
+                    | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
+            """
 
-                for cmd in [update_cmd_1, update_cmd_2]:
-                    audit_update_payload = {"db": self.bootstrap["adx_database"], "csl": cmd.strip()}
-                    async with session.post(
-                        adx_ingest_uri, 
-                        headers=adx_headers, 
-                        json=audit_update_payload
-                    ) as response:
-                        if response.status != 200:
-                            text = await response.text()
-                            raise Exception(f"Config table update failed: {response.status}, {text}")
-                        print(f"[INFO] --> Config table updated for {destination_tbl}")
-                        
-            except Exception as e:
-                print(f"[ERROR] --> Error updating watermark for {destination_tbl}: {str(e)}")
-                raise
+            self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
+            self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
+                    
+        except Exception as e:
+            print(f"[ERROR] --> Error updating watermark for {destination_tbl}: {str(e)}")
+            raise
 
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
@@ -664,6 +654,7 @@ class ConcurrentDefenderIngestionWithChunking:
                         "chunks_processed": 1 if result["success"] else 0,
                         "chunks_failed": 0 if result["success"] else 1,
                         "chunked": False,
+                        "chunk_results": chunk_results,
                         "error": result.get("error", None)
                     }
                 else:
@@ -750,17 +741,13 @@ class ConcurrentDefenderIngestionWithChunking:
                 )
         print(f"[INFO] --> Tables ensured exists")
         
-        # Create aiohttp session with longer timeout for better resilience
         timeout = aiohttp.ClientTimeout(total=900)  # 15 minutes timeout
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=10)  # Connection pooling
         
         print(f"[INFO] --> Starting concurrent processing of {len(table_configs)}")
 
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-            # Create tasks for all tables with better exception handling
             tasks = [self.process_single_table(session, config) for config in table_configs]
-            
-            # Execute all tasks concurrently with return_exceptions=True
             results = await asyncio.gather(*tasks, return_exceptions=True)
         
         end_time = time.time()
