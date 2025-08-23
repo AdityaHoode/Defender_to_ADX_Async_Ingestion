@@ -652,24 +652,6 @@ class ConcurrentDefenderIngestionWithChunking:
                 else:
                     print(f"[INFO] --> {source_tbl} has {total_records:,} records - processing with {num_chunks} chunks")
                     
-                    # # Process all chunks for this table
-                    # chunk_tasks = [
-                    #     self.process_single_chunk(session, table_config, base_query, i, num_chunks)
-                    #     for i in range(num_chunks)
-                    # ]
-                    # chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
-
-                    # chunk_results = []
-                    # for i in range(num_chunks):
-                    #     result = await self.process_single_chunk(session, table_config, base_query, i, num_chunks)
-                    #     chunk_results.append(result)
-
-                    # Wait for ingestion to complete
-                    # await asyncio.sleep(180)
-
-                    # # Update watermark
-                    # await self.update_high_watermark(session, table_config)
-
                     chunk_results = await self.process_multiple_chunks_parallel(
                         session, table_config, base_query, num_chunks
                     )
