@@ -222,7 +222,7 @@ class ConcurrentDefenderIngestionWithChunking:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    async def meta_update_high_watermark(self, ingestion_results: Dict[str, Any]) -> None:
+    def meta_update_high_watermark(self, ingestion_results: Dict[str, Any]) -> None:
 
             for r in ingestion_results:
                 try:
