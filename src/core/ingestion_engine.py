@@ -651,7 +651,7 @@ class ConcurrentDefenderIngestionWithChunking:
                         "chunks_processed": 1 if result["success"] else 0,
                         "chunks_failed": 0 if result["success"] else 1,
                         "chunked": False,
-                        "chunk_results": list(result),
+                        "chunk_results": [result],
                         "error": result.get("error", None)
                     }
                 else:
@@ -751,6 +751,8 @@ class ConcurrentDefenderIngestionWithChunking:
         execution_time = end_time - start_time
 
         print(results)
+
+        self.meta_update_high_watermark(results)
 
         self.meta_insert_audits(
             self.bootstrap["ingestion_id"],
