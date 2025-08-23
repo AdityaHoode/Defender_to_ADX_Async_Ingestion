@@ -283,7 +283,6 @@ class ConcurrentDefenderIngestionWithChunking:
             print("[INFO] --> Inserted audit records")
         except Exception as e:
             print(f"Error inserting audit records: {e}")
-            raise
 
     def meta_insert_chunk_failures(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
