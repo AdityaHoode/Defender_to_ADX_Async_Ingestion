@@ -250,7 +250,7 @@ class ConcurrentDefenderIngestionWithChunking:
 
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
-                            
+                        print(f"[INFO] --> Updated high watermark for {r['table']} to {max_high_watermark}")
                     except Exception as e:
                         print(f"[ERROR] --> Error updating watermark for {r['table']}: {str(e)}")
                         raise
@@ -280,6 +280,7 @@ class ConcurrentDefenderIngestionWithChunking:
 
         try:
             self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
+            print("[INFO] --> Inserted audit records")
         except Exception as e:
             print(f"Error inserting audit records: {e}")
             raise
@@ -309,6 +310,7 @@ class ConcurrentDefenderIngestionWithChunking:
 
             try:
                 self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
+                print("[INFO] --> Inserted chunk failure records")
             except Exception as e:
                 print(f"Error inserting chunk failure records: {e}")
                 raise
