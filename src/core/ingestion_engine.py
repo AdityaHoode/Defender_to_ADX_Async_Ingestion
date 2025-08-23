@@ -222,40 +222,37 @@ class ConcurrentDefenderIngestionWithChunking:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    async def meta_update_high_watermark(self, table_config: Dict[str, Any], ingestion_results: Dict[str, Any]) -> None:
-        source_tbl = table_config["SourceTable"]
-        destination_tbl = table_config["DestinationTable"]
+    async def meta_update_high_watermark(self, ingestion_results: Dict[str, Any]) -> None:
 
-        # insert_values = []
-        # for data in ingestion_results:
-        #     if data["chunked"]:
-        #         if data["success"]:
-        try:
-            print(f"[INFO] --> Retrieved high watermark for {destination_tbl}: {max_timestamp}")
+            for r in ingestion_results:
+                try:
+                    min_low_watermark, max_high_watermark = r["chunk_results"][0]["low_watermark"], r["chunk_results"][-1]["high_watermark"]
 
-            update_cmd_1 = f"""
-                .update table {self.bootstrap["config_table"]} delete D append A <|
-                    let D = {self.bootstrap["config_table"]}
-                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
-                    let A = {self.bootstrap["config_table"]}
-                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
-                    | extend HighWatermark=datetime('{max_timestamp}');
-            """
-            update_cmd_2 = f"""
-                .update table {self.bootstrap["config_table"]} delete D append A <|
-                    let D = {self.bootstrap["config_table"]}
-                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}';
-                    let A = {self.bootstrap["config_table"]}
-                    | where DestinationTable=='{destination_tbl}' and SourceTable=='{source_tbl}'
-                    | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
-            """
+                    print(f"[INFO] --> Retrieved high watermark for {r["table"]}")
 
-            self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
-            self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
-                    
-        except Exception as e:
-            print(f"[ERROR] --> Error updating watermark for {destination_tbl}: {str(e)}")
-            raise
+                    update_cmd_1 = f"""
+                        .update table {self.bootstrap["config_table"]} delete D append A <|
+                            let D = {self.bootstrap["config_table"]}
+                            | where DestinationTable=='{r["table"]}';
+                            let A = {self.bootstrap["config_table"]}
+                            | where DestinationTable=='{r["table"]}'
+                            | extend HighWatermark=datetime('{max_high_watermark}');
+                    """
+                    update_cmd_2 = f"""
+                        .update table {self.bootstrap["config_table"]} delete D append A <|
+                            let D = {self.bootstrap["config_table"]}
+                            | where DestinationTable=='{r["table"]}';
+                            let A = {self.bootstrap["config_table"]}
+                            | where DestinationTable=='{r["table"]}'
+                            | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
+                    """
+
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
+                        
+                except Exception as e:
+                    print(f"[ERROR] --> Error updating watermark for {r["table"]}: {str(e)}")
+                    raise
 
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
@@ -274,7 +271,7 @@ class ConcurrentDefenderIngestionWithChunking:
             insert_values_str = ",\n    ".join(insert_values)
 
         kql_command = f"""
-        .set-or-append meta_MigrationAudit <|
+        .set-or-append {self.bootstrap["audit_table"]} <|
         datatable(ingestion_id:string, ingestion_timestamp: datetime, table: string, success: bool, records_processed: long, chunked: bool, chunks_processed: int, chunks_failed: int, chunk_results: dynamic, error: string)
         [
         {insert_values_str}
@@ -303,7 +300,7 @@ class ConcurrentDefenderIngestionWithChunking:
         
         if insert_values != []:
             kql_command = f"""
-            .set-or-append meta_ChunkIngestionFailures <|
+            .set-or-append {self.bootstrap["chunk_audit_table"]} <|
             datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string)
             [
             {insert_values_str}
@@ -654,7 +651,7 @@ class ConcurrentDefenderIngestionWithChunking:
                         "chunks_processed": 1 if result["success"] else 0,
                         "chunks_failed": 0 if result["success"] else 1,
                         "chunked": False,
-                        "chunk_results": chunk_results,
+                        "chunk_results": result,
                         "error": result.get("error", None)
                     }
                 else:

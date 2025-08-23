@@ -19,6 +19,7 @@ bootstrap = {
     "defender_hunting_api_url": "https://api.security.microsoft.com/api/advancedhunting/run",
     "config_table": "meta_MigrationConfiguration",
     "audit_table": "meta_MigrationAudit",
+    "chunk_audit_table": "meta_ChunkIngestionFailures",
     "clientId": os.getenv("AZURE_CLIENT_ID"),
     "clientSecret": os.getenv("AZURE_CLIENT_SECRET"),
     "tenantId": os.getenv("AZURE_TENANT_ID"),
