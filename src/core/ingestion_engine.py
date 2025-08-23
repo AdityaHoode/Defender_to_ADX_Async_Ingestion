@@ -225,34 +225,35 @@ class ConcurrentDefenderIngestionWithChunking:
     def meta_update_high_watermark(self, ingestion_results: Dict[str, Any]) -> None:
 
             for r in ingestion_results:
-                try:
-                    min_low_watermark, max_high_watermark = r["chunk_results"][0]["low_watermark"], r["chunk_results"][-1]["high_watermark"]
+                if r.get("chunk_results"):
+                    try:
+                        min_low_watermark, max_high_watermark = r["chunk_results"][0]["low_watermark"], r["chunk_results"][-1]["high_watermark"]
 
-                    print(f"[INFO] --> Retrieved high watermark for {r['table']}")
+                        print(f"[INFO] --> Retrieved high watermark for {r['table']}")
 
-                    update_cmd_1 = f"""
-                        .update table {self.bootstrap["config_table"]} delete D append A <|
-                            let D = {self.bootstrap["config_table"]}
-                            | where DestinationTable=='{r["table"]}';
-                            let A = {self.bootstrap["config_table"]}
-                            | where DestinationTable=='{r["table"]}'
-                            | extend HighWatermark=datetime('{max_high_watermark}');
-                    """
-                    update_cmd_2 = f"""
-                        .update table {self.bootstrap["config_table"]} delete D append A <|
-                            let D = {self.bootstrap["config_table"]}
-                            | where DestinationTable=='{r["table"]}';
-                            let A = {self.bootstrap["config_table"]}
-                            | where DestinationTable=='{r["table"]}'
-                            | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
-                    """
+                        update_cmd_1 = f"""
+                            .update table {self.bootstrap["config_table"]} delete D append A <|
+                                let D = {self.bootstrap["config_table"]}
+                                | where DestinationTable=='{r["table"]}';
+                                let A = {self.bootstrap["config_table"]}
+                                | where DestinationTable=='{r["table"]}'
+                                | extend HighWatermark=datetime('{max_high_watermark}');
+                        """
+                        update_cmd_2 = f"""
+                            .update table {self.bootstrap["config_table"]} delete D append A <|
+                                let D = {self.bootstrap["config_table"]}
+                                | where DestinationTable=='{r["table"]}';
+                                let A = {self.bootstrap["config_table"]}
+                                | where DestinationTable=='{r["table"]}'
+                                | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
+                        """
 
-                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
-                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
-                        
-                except Exception as e:
-                    print(f"[ERROR] --> Error updating watermark for {r['table']}: {str(e)}")
-                    raise
+                        self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
+                        self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
+                            
+                    except Exception as e:
+                        print(f"[ERROR] --> Error updating watermark for {r['table']}: {str(e)}")
+                        raise
 
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
