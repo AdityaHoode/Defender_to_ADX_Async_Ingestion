@@ -227,7 +227,7 @@ class ConcurrentDefenderIngestionWithChunking:
             for r in ingestion_results:
                 if r.get("chunk_results"):
                     try:
-                        min_low_watermark, max_high_watermark = r["chunk_results"][0]["low_watermark"], r["chunk_results"][-1]["high_watermark"]
+                        max_high_watermark = r["chunk_results"][-1]["high_watermark"] if r["chunk_results"][-1]["high_watermark"] else 'null'
 
                         print(f"[INFO] --> Retrieved high watermark for {r['table']}")
 
@@ -247,6 +247,8 @@ class ConcurrentDefenderIngestionWithChunking:
                                 | where DestinationTable=='{r["table"]}'
                                 | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
                         """
+
+                        print(f"[DEBUG] --> {update_cmd_1}")
 
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
@@ -290,12 +292,14 @@ class ConcurrentDefenderIngestionWithChunking:
             if data.get("chunk_results"):
                 for r in data["chunk_results"]:
                     if not r["success"]:
+                        low_watermark = r["low_watermark"] if r["low_watermark"] else 'null'
+                        high_watermark = r["high_watermark"] if r["high_watermark"] else 'null'
                         error_val = '""' if r["error"] is None else str(r["error"]).replace('"', "")
                         insert_values.append(
                             f'"{ingestion_id}", datetime({ingestion_start_time}), '
                             f'"{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
                             f'{r["records_count"]}, {r["records_processed"]}, '
-                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), "{error_val}", "false"'
+                            f'datetime({low_watermark}), datetime({high_watermark}), "{error_val}", "false"'
                         )
                 insert_values_str = ",\n    ".join(insert_values)
         
@@ -547,10 +551,14 @@ class ConcurrentDefenderIngestionWithChunking:
                 if response.status != 200:
                     error_text = await response.text()
                     return {
+                        "table": destination_tbl,
                         "success": False,
-                        "chunk_index": chunk_index,
+                        "chunk_id": chunk_index,
+                        "records_count": 0,
+                        "records_processed": 0,
+                        "low_watermark": None,
+                        "high_watermark": None,
                         "error": f"API call failed: {response.status} - {error_text}",
-                        "records_processed": 0
                     }
                 
                 apijson = await response.json()
@@ -558,9 +566,14 @@ class ConcurrentDefenderIngestionWithChunking:
                 
                 if not records:
                     return {
+                        "table": destination_tbl,
                         "success": True,
-                        "chunk_index": chunk_index,
-                        "records_processed": 0
+                        "chunk_id": chunk_index,
+                        "records_count": 0,
+                        "records_processed": 0,
+                        "low_watermark": None,
+                        "high_watermark": None,
+                        "error": None
                     }
                 
                 chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
@@ -577,7 +590,7 @@ class ConcurrentDefenderIngestionWithChunking:
             
             return {
                 "success": False,
-                "chunk_index": chunk_index,
+                "chunk_id": chunk_index,
                 "error": str(e),
                 "records_processed": 0
             }
@@ -726,7 +739,7 @@ class ConcurrentDefenderIngestionWithChunking:
         start_time = time.time()
 
         for config in table_configs:
-            if not config["HighWatermark"] and not config["LastRefreshedTime"]:
+            if not config["HighWatermark"]:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     self.thread_pool,

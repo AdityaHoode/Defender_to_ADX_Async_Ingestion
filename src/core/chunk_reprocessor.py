@@ -21,7 +21,7 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
         
         base_query = f"""
             {self.bootstrap["chunk_audit_table"]}
-            | where reprocess_success == false
+            | where reprocess_success == false and isnotnull(low_watermark) and isnotnull(high_watermark)
         """
         
         try:
