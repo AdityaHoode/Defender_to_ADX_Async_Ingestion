@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 import asyncio
 
-from core.chunk_reprocessor import DefenderIngestionReprocessor
+from core.chunk_reprocessor import Reprocessor
 
 load_dotenv()
 
@@ -24,7 +24,7 @@ bootstrap = {
 
 async def main():
         
-    reprocess_handler = DefenderIngestionReprocessor(
+    reprocess_handler = Reprocessor(
         bootstrap=bootstrap,
         max_concurrent_tasks=5,
         chunk_size=25000

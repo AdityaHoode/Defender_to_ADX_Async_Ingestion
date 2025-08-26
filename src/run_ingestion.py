@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 import asyncio
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 
-from core.ingestion_engine import ConcurrentDefenderIngestionWithChunking
-from core.chunk_reprocessor import DefenderIngestionReprocessor
+from core.ingestion_engine import Ingestor
+from core.chunk_reprocessor import Reprocessor
 
 load_dotenv()
 
@@ -27,7 +27,6 @@ bootstrap = {
 }
 
 def setup_kusto_clients(bootstrap):
-    """Setup Kusto client for querying metadata"""
     kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
         bootstrap["adx_cluster_uri"],
         bootstrap["clientId"],
@@ -40,7 +39,6 @@ def setup_kusto_clients(bootstrap):
     return kusto_client
 
 def fetch_migration_config(kusto_client, bootstrap):
-    """Fetch the latest migration configuration from ADX"""
     print("[INFO] --> Fetching migration configuration from ADX...")
     
     response_config = kusto_client.execute(
@@ -58,7 +56,7 @@ async def main():
     print("STARTING CHUNK REPROCESSING")
     print("="*100)
     
-    reprocess_handler = DefenderIngestionReprocessor(
+    reprocess_handler = Reprocessor(
         bootstrap=bootstrap,
         max_concurrent_tasks=5,
         chunk_size=25000
@@ -92,7 +90,7 @@ async def main():
     if table_configs:
         print(f"[INFO] --> Found {len(table_configs)} active tables for migration")
 
-        ingestion_handler = ConcurrentDefenderIngestionWithChunking(
+        ingestion_handler = Ingestor(
             bootstrap=bootstrap,
             max_concurrent_tasks=5,
             max_thread_workers=8,

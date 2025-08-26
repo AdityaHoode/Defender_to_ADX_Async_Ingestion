@@ -7,9 +7,9 @@ from datetime import timezone, datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple, Union
 from concurrent.futures import ThreadPoolExecutor
 
-from core.ingestion_engine import ConcurrentDefenderIngestionWithChunking
+from core.ingestion_engine import Ingestor
 
-class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
+class Reprocessor(Ingestor):
     
     def __init__(self, bootstrap: Dict[str, Any], max_concurrent_tasks: int = 3, chunk_size: int = 25000, max_thread_workers: int = 8):
         

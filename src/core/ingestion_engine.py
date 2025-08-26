@@ -17,7 +17,7 @@ from azure.kusto.data.data_format import DataFormat
 from azure.kusto.ingest import QueuedIngestClient, IngestionProperties, IngestionMappingKind, ReportLevel
 
 
-class ConcurrentDefenderIngestionWithChunking:
+class Ingestor:
     def __init__(self, bootstrap: Dict[str, Any], max_concurrent_tasks: int = 3, chunk_size: int = 25000, max_thread_workers: int = 8):
         self.bootstrap = bootstrap
         self.chunk_size = chunk_size
