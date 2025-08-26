@@ -295,14 +295,14 @@ class ConcurrentDefenderIngestionWithChunking:
                             f'"{ingestion_id}", datetime({ingestion_start_time}), '
                             f'"{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
                             f'{r["records_count"]}, {r["records_processed"]}, '
-                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), "{error_val}"'
+                            f'datetime({r["low_watermark"]}), datetime({r["high_watermark"]}), "{error_val}", "false"'
                         )
                 insert_values_str = ",\n    ".join(insert_values)
         
         if insert_values != []:
             kql_command = f"""
             .set-or-append {self.bootstrap["chunk_audit_table"]} <|
-            datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string)
+            datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string, reprocess_success:bool)
             [
             {insert_values_str}
             ]"""

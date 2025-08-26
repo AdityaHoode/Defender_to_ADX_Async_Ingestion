@@ -21,7 +21,7 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
         
         base_query = f"""
             {self.bootstrap["chunk_audit_table"]}
-            | where success == false
+            | where reprocess_success == false
         """
         
         try:
@@ -30,6 +30,7 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
             
             for row in response.primary_results[0]:
                 failed_chunks.append({
+                    "ingestion_id": row["ingestion_id"],
                     "table": row["table"],
                     "chunk_id": row["chunk_id"],
                     "low_watermark": row["low_watermark"],
@@ -87,6 +88,31 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
         )
         
         return query
+    
+    def meta_update_chunk_failures(
+        self, 
+        reprocess_results: List[Dict[str, Any]]
+    ) -> None:
+        
+        print("[FUNCTION] --> meta_update_chunk_failures")
+
+        for result in reprocess_results:
+            if result.get("success"):
+                update_cmd = f"""
+                    .update table {self.bootstrap["chunk_audit_table"]} delete D append A <|
+                        let D = {self.bootstrap["chunk_audit_table"]}
+                        | where ingestion_id=='{result["ingestion_id"]}' and table=='{result["table"]}' and chunk_id=={result["chunk_id"]} and success==false;
+                        let A = {self.bootstrap["chunk_audit_table"]}
+                        | where ingestion_id=='{result["ingestion_id"]}' and table=='{result["table"]}' and chunk_id=={result["chunk_id"]} and success==false
+                        | extend reprocess_success=true;
+                """   
+
+                try:
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd)
+                    print("[INFO] --> Inserted reprocess audit records")
+                except Exception as e:
+                    print(f"[ERROR] --> Error inserting reprocess audit records: {e}")
+                    raise
 
     async def reprocess_single_chunk(
         self, 
@@ -156,6 +182,7 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
                 ingest_result = await self.ingest_to_adx(records, chunk_id, table_name, watermark_column)
                 
                 result = {
+                    "ingestion_id": failed_chunk["ingestion_id"],
                     "success": ingest_result["success"],
                     "chunk_id": chunk_id,
                     "table": table_name,
@@ -184,22 +211,6 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
                 "low_watermark": low_watermark.isoformat(),
                 "high_watermark": high_watermark.isoformat(),
             }
-
-    def insert_reprocess_audit(
-        self, 
-        reprocess_results: List[Dict[str, Any]]
-    ) -> None:
-        
-        print("[FUNCTION] --> insert_reprocess_audit")
-
-        kql_command = ""
-
-        try:
-            self.data_client.execute_mgmt(self.bootstrap["adx_database"], kql_command)
-            print("[INFO] --> Inserted reprocess audit records")
-        except Exception as e:
-            print(f"[ERROR] --> Error inserting reprocess audit records: {e}")
-            raise
 
     async def reprocess_failed_chunks(self) -> Dict[str, Any]:
 
@@ -264,8 +275,8 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
 
             print(f"[INFO] --> valid_results: {valid_results}")
 
-            # if valid_results:
-            #     self.insert_reprocess_audit(valid_results)
+            if valid_results:
+                self.meta_update_chunk_failures(valid_results)
             
             end_time = time.time()
             execution_time = end_time - start_time
