@@ -399,7 +399,6 @@ class ConcurrentDefenderIngestionWithChunking:
 
     def _sync_ingest_data(self, records: List[Dict], chunk_index: int, destination_tbl: str, low_watermark: str, high_watermark: str) -> None:
         """Synchronous data ingestion - runs in thread pool"""
-        print("[FUNCTION] --> _sync_ingest_data")
         max_retries = 5
         retry_attempts = 0
         backoff_factor = 2
