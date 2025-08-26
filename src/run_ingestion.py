@@ -26,7 +26,7 @@ bootstrap = {
 }
 
 def setup_kusto_clients(bootstrap):
-    """Setup Kusto clients for querying metadata"""
+    """Setup Kusto client for querying metadata"""
     kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
         bootstrap["adx_cluster_uri"],
         bootstrap["clientId"],
