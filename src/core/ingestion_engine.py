@@ -15,8 +15,6 @@ import threading
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 from azure.kusto.data.data_format import DataFormat
 from azure.kusto.ingest import QueuedIngestClient, IngestionProperties, IngestionMappingKind, ReportLevel
-from azure.kusto.ingest.status import KustoIngestStatusQueues
-
 
 
 class ConcurrentDefenderIngestionWithChunking:
@@ -144,9 +142,7 @@ class ConcurrentDefenderIngestionWithChunking:
                 self.adx_token_cache = {'token': None, 'expires': None}
                 raise Exception(f"ADX token acquisition failed: {str(e)}")
     
-    def build_base_kql_query(self, source_tbl: str, load_type: str, watermark_column: str, high_watermark: datetime) -> str:
-        print("[FUNCTION] --> build_base_kql_query")
-        
+    def build_base_kql_query(self, source_tbl: str, load_type: str, watermark_column: str, high_watermark: datetime) -> str:        
         if load_type == "Full" or not high_watermark:
             return source_tbl
         else:
@@ -188,7 +184,6 @@ class ConcurrentDefenderIngestionWithChunking:
             raise
 
     async def calculate_chunks(self, session: aiohttp.ClientSession, base_query: str) -> Tuple[int, int]:
-        print("[FUNCTION] --> calculate_chunks")
         try:
             total_records = await self.get_record_count(session, base_query)
             if total_records == 0:
@@ -229,8 +224,6 @@ class ConcurrentDefenderIngestionWithChunking:
                     try:
                         max_high_watermark = r["chunk_results"][-1]["high_watermark"] if r["chunk_results"][-1]["high_watermark"] else 'null'
 
-                        print(f"[INFO] --> Retrieved high watermark for {r['table']}")
-
                         update_cmd_1 = f"""
                             .update table {self.bootstrap["config_table"]} delete D append A <|
                                 let D = {self.bootstrap["config_table"]}
@@ -247,8 +240,6 @@ class ConcurrentDefenderIngestionWithChunking:
                                 | where DestinationTable=='{r["table"]}'
                                 | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
                         """
-
-                        print(f"[DEBUG] --> {update_cmd_1}")
 
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
                         self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
@@ -332,9 +323,9 @@ class ConcurrentDefenderIngestionWithChunking:
 
                 try:
                     self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd)
-                    print("[INFO] --> Deactivated tables with failures in chunk audit")
+                    print("[INFO] --> Deactivated tables with chunk failures")
                 except Exception as e:
-                    print(f"[ERROR] --> Error deactivating tables with failures in chunk audit: {e}")
+                    print(f"[ERROR] --> Error deactivating tables with chunk failures: {e}")
                     raise
 
 
@@ -408,6 +399,7 @@ class ConcurrentDefenderIngestionWithChunking:
 
     def _sync_ingest_data(self, records: List[Dict], chunk_index: int, destination_tbl: str, low_watermark: str, high_watermark: str) -> None:
         """Synchronous data ingestion - runs in thread pool"""
+        print("[FUNCTION] --> _sync_ingest_data")
         max_retries = 5
         retry_attempts = 0
         backoff_factor = 2
@@ -488,15 +480,15 @@ class ConcurrentDefenderIngestionWithChunking:
                 high_watermark
             )
 
-            if not chunk_result["success"]:
-                print(f"[ERROR] --> Ingestion failed for {destination_tbl} chunk {chunk_index}: {chunk_result['error']}")
-            else:
-                print(f"[INFO] --> Successfully ingested to {destination_tbl}")
+            # if not chunk_result["success"]:
+            #     print(f"[ERROR] --> Ingestion failed for {destination_tbl} chunk {chunk_index}: {chunk_result['error']}")
+            # else:
+            #     print(f"[INFO] --> Successfully ingested to {destination_tbl}")
             
             return chunk_result
             
         except Exception as e:
-            print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
+            # print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
             
             return {
                 "chunk_id": chunk_index,
@@ -659,6 +651,7 @@ class ConcurrentDefenderIngestionWithChunking:
                     return {
                         "table": destination_tbl,
                         "success": True,
+                        "records_count": 0, 
                         "records_processed": 0,
                         "chunks_processed": 0,
                         "chunks_failed": 0,
@@ -735,6 +728,7 @@ class ConcurrentDefenderIngestionWithChunking:
         print("[FUNCTION] --> process_all_tables")
         print(f"[INFO] --> Chunk size: {self.chunk_size:,} records")
         print(f"[INFO] --> Max concurrent tasks: {self.max_concurrent_tasks}")
+        print(f"[INFO] --> Max thread workers: {self.max_thread_workers}")
 
         start_time = time.time()
 
@@ -747,7 +741,6 @@ class ConcurrentDefenderIngestionWithChunking:
                     config["DestinationTable"],
                     config["WatermarkColumn"]
                 )
-        print(f"[INFO] --> Tables ensured exists")
         
         timeout = aiohttp.ClientTimeout(total=900)  # 15 minutes timeout
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=10)  # Connection pooling
@@ -760,8 +753,6 @@ class ConcurrentDefenderIngestionWithChunking:
         
         end_time = time.time()
         execution_time = end_time - start_time
-
-        print(results)
 
         self.meta_update_high_watermark(results)
 

@@ -8,6 +8,7 @@ import asyncio
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 
 from core.ingestion_engine import ConcurrentDefenderIngestionWithChunking
+from core.chunk_reprocessor import DefenderIngestionReprocessor
 
 load_dotenv()
 
@@ -52,6 +53,29 @@ def fetch_migration_config(kusto_client, bootstrap):
     return response_config
 
 async def main():
+
+    print("="*100)
+    print("STARTING CHUNK REPROCESSING")
+    print("="*100)
+    
+    reprocess_handler = DefenderIngestionReprocessor(
+        bootstrap=bootstrap,
+        max_concurrent_tasks=5,
+        chunk_size=25000
+    )
+
+    try:
+        summary = await reprocess_handler.reprocess_failed_chunks()
+        pprint.pprint(summary)
+    except Exception as e:
+        print(f"[ERROR] --> Exception during reprocessing: {e}")
+    finally:
+        reprocess_handler.thread_pool.shutdown(wait=True)
+
+    print("="*100)
+    print("STARTING MAIN INGESTION")
+    print("="*100)
+
     now = datetime.now(timezone.utc)
     kusto_ingest_datetime = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     bootstrap["ingestion_start_time"] = kusto_ingest_datetime
@@ -70,7 +94,8 @@ async def main():
 
         ingestion_handler = ConcurrentDefenderIngestionWithChunking(
             bootstrap=bootstrap,
-            max_concurrent_tasks=5,  # Lower when chunking
+            max_concurrent_tasks=5,
+            max_thread_workers=8,
             chunk_size=25000
         )
 

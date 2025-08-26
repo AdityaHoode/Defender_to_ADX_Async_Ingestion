@@ -1,13 +1,9 @@
 import os
-import uuid
 import pprint
 from dotenv import load_dotenv
-from datetime import datetime, timezone
 
 import asyncio
-from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 
-from core.ingestion_engine import ConcurrentDefenderIngestionWithChunking
 from core.chunk_reprocessor import DefenderIngestionReprocessor
 
 load_dotenv()
