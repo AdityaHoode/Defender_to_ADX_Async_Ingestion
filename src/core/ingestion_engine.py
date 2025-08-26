@@ -314,6 +314,26 @@ class ConcurrentDefenderIngestionWithChunking:
                 print(f"Error inserting chunk failure records: {e}")
                 raise
 
+    def meta_deactivate_failed_tables(self, ingestion_results: Dict[str, Any]) -> None:
+        for data in ingestion_results:
+            if not data["success"]:
+                update_cmd = f"""
+                    .update table {self.bootstrap["config_table"]} delete D append A <|
+                        let D = {self.bootstrap["config_table"]}
+                        | where DestinationTable=='{data["table"]}';
+                        let A = {self.bootstrap["config_table"]}
+                        | where DestinationTable=='{data["table"]}'
+                        | extend IsActive=false;
+                """   
+
+                try:
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd)
+                    print("[INFO] --> Deactivated tables with failures in chunk audit")
+                except Exception as e:
+                    print(f"[ERROR] --> Error deactivating tables with failures in chunk audit: {e}")
+                    raise
+
+
     def analyze_results(self, table_configs: List[Dict[str, Any]], ingestion_results: List[Dict[str, Any]], execution_time: float) -> Dict[str, Any]:
         successful_tables = 0
         failed_tables = 0
@@ -731,6 +751,8 @@ class ConcurrentDefenderIngestionWithChunking:
         print(results)
 
         self.meta_update_high_watermark(results)
+
+        self.meta_deactivate_failed_tables(results)
 
         self.meta_insert_audits(
             self.bootstrap["ingestion_id"],

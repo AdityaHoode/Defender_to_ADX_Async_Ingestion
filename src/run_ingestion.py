@@ -63,7 +63,7 @@ async def main():
     response_config = fetch_migration_config(kusto_client, bootstrap)
 
     table = response_config.primary_results[0]
-    table_configs = [row.to_dict() for row in table if row["IsActive"]]
+    table_configs = [row.to_dict() for row in table if (row["IsActive"] and not (row["LoadType"] == "Full" and (row["LastRefreshedTime"] or row["HighWatermark"])))]
 
     if table_configs:
         print(f"[INFO] --> Found {len(table_configs)} active tables for migration")

@@ -2,3 +2,4 @@
 sandbox
 src/test.py
 venv
+src/core/__pycache__
