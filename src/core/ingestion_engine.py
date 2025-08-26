@@ -150,9 +150,9 @@ class ConcurrentDefenderIngestionWithChunking:
             return f"{source_tbl} | where {watermark_column} > datetime('{formatted_ts}')"
     
     def build_chunked_kql_query(self, base_query: str, watermark_column: str, chunk_index: int, chunk_size: int) -> str:
-        start_rank = (chunk_index-1) * chunk_size
-        end_rank = start_rank + chunk_size
-        return f"{base_query} | sort by {watermark_column} asc | extend Rank = row_rank_min({watermark_column}) | where Rank between ({start_rank+1} .. {end_rank})"
+        start_rownum = (chunk_index-1) * chunk_size
+        end_rownum = start_rownum + chunk_size
+        return f"{base_query} | sort by {watermark_column} asc | extend rownum = row_number() | where rownum between ({start_rownum+1} .. {end_rownum})"
 
     async def get_record_count(self, session: aiohttp.ClientSession, base_query: str) -> int:
         count_query = f"{base_query} | count"
@@ -190,7 +190,7 @@ class ConcurrentDefenderIngestionWithChunking:
                 return 0, 0
             
             num_chunks = math.ceil(total_records / self.chunk_size)
-            print(f"[INFO] --> Total records: {total_records:,}, Chunk size: {self.chunk_size:,}, Number of chunks: {num_chunks}")
+            # print(f"[INFO] --> Total records: {total_records:,}, Chunk size: {self.chunk_size:,}, Number of chunks: {num_chunks}")
             return total_records, num_chunks
         except Exception as e:
             print(f"[ERROR] --> Error calculating chunks: {e}")
@@ -745,7 +745,7 @@ class ConcurrentDefenderIngestionWithChunking:
         timeout = aiohttp.ClientTimeout(total=900)  # 15 minutes timeout
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=10)  # Connection pooling
         
-        print(f"[INFO] --> Starting concurrent processing of {len(table_configs)}")
+        print(f"[INFO] --> Starting concurrent processing of {len(table_configs)} tables")
 
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             tasks = [self.process_single_table(session, config) for config in table_configs]

@@ -214,10 +214,6 @@ class DefenderIngestionReprocessor(ConcurrentDefenderIngestionWithChunking):
 
     async def reprocess_failed_chunks(self) -> Dict[str, Any]:
 
-        print("="*100)
-        print("STARTING CHUNK REPROCESSING")
-        print("="*100)
-
         start_time = time.time()
         
         try:
