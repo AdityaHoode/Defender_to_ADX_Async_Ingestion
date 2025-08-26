@@ -154,9 +154,9 @@ class ConcurrentDefenderIngestionWithChunking:
             return f"{source_tbl} | where {watermark_column} > datetime('{formatted_ts}')"
     
     def build_chunked_kql_query(self, base_query: str, watermark_column: str, chunk_index: int, chunk_size: int) -> str:
-        start_rownum = (chunk_index-1) * chunk_size
-        end_rownum = start_rownum + chunk_size
-        return f"{base_query} | sort by {watermark_column} asc | extend RowNum = rank() | where RowNum between ({start_rownum+1} .. {end_rownum})"
+        start_rank = (chunk_index-1) * chunk_size
+        end_rank = start_rank + chunk_size
+        return f"{base_query} | sort by {watermark_column} asc | extend Rank = row_rank_min({watermark_column}) | where Rank between ({start_rank+1} .. {end_rank})"
 
     async def get_record_count(self, session: aiohttp.ClientSession, base_query: str) -> int:
         count_query = f"{base_query} | count"
