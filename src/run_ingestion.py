@@ -18,7 +18,7 @@ bootstrap = {
     "adx_database": "db1",
     "defender_resource_uri":"https://api.security.microsoft.com",
     "defender_hunting_api_url": "https://api.security.microsoft.com/api/advancedhunting/run",
-    "config_table": "meta_MigrationConfiguration",
+    "config_table": "vw_meta_LatestMigrationConfiguration",
     "audit_table": "meta_MigrationAudit",
     "chunk_audit_table": "meta_ChunkIngestionFailures",
     "clientId": os.getenv("AZURE_CLIENT_ID"),

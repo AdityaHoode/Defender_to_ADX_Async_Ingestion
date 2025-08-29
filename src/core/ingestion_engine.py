@@ -512,6 +512,11 @@ class Ingestor:
         source_tbl = table_config["SourceTable"]
         destination_tbl = table_config["DestinationTable"]
         watermark_column = table_config["WatermarkColumn"]
+
+        max_retries = 5
+        retry_attempts = 0
+        # backoff_factor = 2
+        # max_backoff = 60
         
         try:
             if disable_chunking:
@@ -527,48 +532,66 @@ class Ingestor:
                 "Content-Type": "application/json"
             }
             
-            async with session.post(
-                self.bootstrap['defender_hunting_api_url'],
-                headers=headers,
-                json={"Query": chunked_query},
-                timeout=aiohttp.ClientTimeout(total=300)
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    return {
-                        "table": destination_tbl,
-                        "success": False,
-                        "chunk_id": chunk_index,
-                        "records_count": 0,
-                        "records_processed": 0,
-                        "low_watermark": None,
-                        "high_watermark": None,
-                        "error": f"API call failed: {response.status} - {error_text}",
-                    }
+            while retry_attempts < max_retries:
+                async with session.post(
+                    self.bootstrap['defender_hunting_api_url'],
+                    headers=headers,
+                    json={"Query": chunked_query},
+                    timeout=aiohttp.ClientTimeout(total=300)
+                ) as response:
+                    if response.status == 429:
+                        retry_attempts += 1
+                        if retry_attempts < max_retries:
+                            retry_after = int(response.headers.get("Retry-After", "60"))
+                            print(f"[WARNING] --> Rate limited by Defender API. Retrying chunk {chunk_index} after {retry_after} seconds...")
+                            await asyncio.sleep(retry_after)
+                        else:
+                            return {
+                                "table": destination_tbl,
+                                "success": False,
+                                "chunk_id": chunk_index,
+                                "records_count": 0,
+                                "records_processed": 0,
+                                "low_watermark": None,
+                                "high_watermark": None,
+                                "error": f"Rate limited by Defender API: {response.status} - {error_text}",
+                            }
+                    elif response.status != 200:
+                        error_text = await response.text()
+                        return {
+                            "table": destination_tbl,
+                            "success": False,
+                            "chunk_id": chunk_index,
+                            "records_count": 0,
+                            "records_processed": 0,
+                            "low_watermark": None,
+                            "high_watermark": None,
+                            "error": f"API call failed: {response.status} - {error_text}",
+                        }
                 
-                apijson = await response.json()
-                records = apijson.get("Results", [])
-                
-                if not records:
-                    return {
-                        "table": destination_tbl,
-                        "success": True,
-                        "chunk_id": chunk_index,
-                        "records_count": 0,
-                        "records_processed": 0,
-                        "low_watermark": None,
-                        "high_watermark": None,
-                        "error": None
-                    }
-                
-                chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
-                
-                if not chunk_result["success"]:
-                    print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
-                else:
-                    print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index}/{total_chunks} - {len(records):,} records")
+            apijson = await response.json()
+            records = apijson.get("Results", [])
+            
+            if not records:
+                return {
+                    "table": destination_tbl,
+                    "success": True,
+                    "chunk_id": chunk_index,
+                    "records_count": 0,
+                    "records_processed": 0,
+                    "low_watermark": None,
+                    "high_watermark": None,
+                    "error": None
+                }
+            
+            chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
+            
+            if not chunk_result["success"]:
+                print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
+            else:
+                print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index}/{total_chunks} - {len(records):,} records")
 
-                return chunk_result
+            return chunk_result
                 
         except Exception as e:
             print(f"[ERROR] --> Error processing chunk for {source_tbl} (chunk {chunk_index}): {str(e)}")
