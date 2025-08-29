@@ -41,8 +41,6 @@ class Ingestor:
         self.adx_token_cache = {'token': None, 'expires': None}
         self.token_lock = asyncio.Lock()
 
-        self.update_lock = asyncio.Lock()
-
     def _create_adx_ingest_client(self):
         kcsb = KustoConnectionStringBuilder.with_aad_application_key_authentication(
             connection_string=self.connection_config['ingest_uri'],
@@ -63,7 +61,6 @@ class Ingestor:
     
     async def get_defender_token(self, session: aiohttp.ClientSession) -> str:
         async with self.token_lock:
-            # Check if cached token is still valid
             if (self.defender_token_cache['token'] and 
                 self.defender_token_cache['expires'] and
                 datetime.now() < self.defender_token_cache['expires']):
@@ -86,11 +83,11 @@ class Ingestor:
                     if response.status == 200:
                         token_data = await response.json()
                         token = token_data["access_token"]
-                        expires_in = int(token_data.get("expires_in", 3600))  # Default 1 hour
+                        expires_in = int(token_data.get("expires_in", 3600))
                         
                         self.defender_token_cache = {
                             'token': token,
-                            'expires': datetime.now() + timedelta(seconds=expires_in - 300) # Cache for 5 minutes less than expiry
+                            'expires': datetime.now() + timedelta(seconds=expires_in - 300)
                         }
                         print("[INFO] --> Defender Token acquired")
                         return token
@@ -517,7 +514,6 @@ class Ingestor:
         watermark_column = table_config["WatermarkColumn"]
         
         try:
-            # Build chunked query
             if disable_chunking:
                 chunked_query = base_query
             else:
@@ -525,19 +521,17 @@ class Ingestor:
             
             print(f"[INFO] --> Processing {source_tbl} chunk {chunk_index}/{total_chunks}")
             
-            # Get fresh token for this request
             defender_token = await self.get_defender_token(session)
             headers = {
                 "Authorization": f"Bearer {defender_token}",
                 "Content-Type": "application/json"
             }
             
-            # Make API call with timeout to get record
             async with session.post(
                 self.bootstrap['defender_hunting_api_url'],
                 headers=headers,
                 json={"Query": chunked_query},
-                timeout=aiohttp.ClientTimeout(total=300)  # 5 minute timeout per chunk
+                timeout=aiohttp.ClientTimeout(total=300)
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -599,7 +593,7 @@ class Ingestor:
             list(range(i, min(i + batch_size, num_chunks+1))) 
             for i in range(1, num_chunks+1, batch_size)
         ]
-        
+
         processed_results = []
         
         for batch_indices in chunk_batches:
