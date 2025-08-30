@@ -214,36 +214,69 @@ class Ingestor:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    def meta_update_high_watermark(self, ingestion_results: Dict[str, Any]) -> None:
+    def meta_update_config_table(self, ingestion_results: Dict[str, Any], table_configs: List[Dict[str, Any]]) -> None:
+        table_lookup = {item["DestinationTable"]: item for item in table_configs}
 
-            for r in ingestion_results:
-                if r.get("chunk_results"):
-                    try:
-                        max_high_watermark = r["chunk_results"][-1]["high_watermark"] if r["chunk_results"][-1]["high_watermark"] else 'null'
+        for r in ingestion_results:
+            if r.get("chunk_results"):
+                try:
+                    max_high_watermark = r["chunk_results"][-1]["high_watermark"] if r["chunk_results"][-1]["high_watermark"] else 'null'
 
-                        update_cmd_1 = f"""
-                            .update table {self.bootstrap["config_table"]} delete D append A <|
-                                let D = {self.bootstrap["config_table"]}
-                                | where DestinationTable=='{r["table"]}';
-                                let A = {self.bootstrap["config_table"]}
-                                | where DestinationTable=='{r["table"]}'
-                                | extend HighWatermark=datetime('{max_high_watermark}');
+                    source_table = table_lookup.get(r["table"])["SourceTable"]
+                    watermark_column = table_lookup.get(r["table"])["WatermarkColumn"]
+                    load_type = table_lookup.get(r["table"])["LoadType"]
+                    
+                    if r["success"]:
+                        append_command = f"""
+                            .set-or-append {self.bootstrap['config_table']} <|
+                            datatable (
+                                SourceTable: string,
+                                DestinationTable: string,
+                                WatermarkColumn: string,
+                                LastRefreshedTime: datetime,
+                                HighWatermark: datetime,
+                                LoadType: string,
+                                IsActive: bool
+                            )
+                            [
+                                '{source_table}',
+                                '{r["table"]}',
+                                '{watermark_column}',
+                                '{self.bootstrap["ingestion_start_time"]}',
+                                datetime('{max_high_watermark}'),
+                                '{load_type}',
+                                true
+                            ]
                         """
-                        update_cmd_2 = f"""
-                            .update table {self.bootstrap["config_table"]} delete D append A <|
-                                let D = {self.bootstrap["config_table"]}
-                                | where DestinationTable=='{r["table"]}';
-                                let A = {self.bootstrap["config_table"]}
-                                | where DestinationTable=='{r["table"]}'
-                                | extend LastRefreshedTime=datetime('{self.bootstrap["ingestion_start_time"]}');
+                    else:
+                        append_command = f"""
+                            .set-or-append {self.bootstrap['config_table']} <|
+                            datatable (
+                                SourceTable: string,
+                                DestinationTable: string,
+                                WatermarkColumn: string,
+                                LastRefreshedTime: datetime,
+                                HighWatermark: datetime,
+                                LoadType: string,
+                                IsActive: bool
+                            )
+                            [
+                                '{source_table}',
+                                '{r["table"]}',
+                                '{watermark_column}',
+                                '{self.bootstrap["ingestion_start_time"]}',
+                                datetime('{max_high_watermark}'),
+                                '{load_type}',
+                                false
+                            ]
                         """
 
-                        self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_1)
-                        self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd_2)
-                        print(f"[INFO] --> Updated high watermark for {r['table']} to {max_high_watermark}")
-                    except Exception as e:
-                        print(f"[ERROR] --> Error updating watermark for {r['table']}: {str(e)}")
-                        raise
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], append_command)
+
+                    print(f"[INFO] --> Updated config for {r['table']} to {max_high_watermark}")
+                except Exception as e:
+                    print(f"[ERROR] --> Error updating config for {r['table']}: {str(e)}")
+                    raise
 
     def meta_insert_audits(self, ingestion_id: str, ingestion_start_time: str, ingestion_results: Dict[str, Any]) -> None:
         insert_values = []
@@ -305,25 +338,6 @@ class Ingestor:
             except Exception as e:
                 print(f"Error inserting chunk failure records: {e}")
                 raise
-
-    def meta_deactivate_failed_tables(self, ingestion_results: Dict[str, Any]) -> None:
-        for data in ingestion_results:
-            if not data["success"]:
-                update_cmd = f"""
-                    .update table {self.bootstrap["config_table"]} delete D append A <|
-                        let D = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{data["table"]}';
-                        let A = {self.bootstrap["config_table"]}
-                        | where DestinationTable=='{data["table"]}'
-                        | extend IsActive=false;
-                """   
-
-                try:
-                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd)
-                    print("[INFO] --> Deactivated tables with chunk failures")
-                except Exception as e:
-                    print(f"[ERROR] --> Error deactivating tables with chunk failures: {e}")
-                    raise
 
 
     def analyze_results(self, table_configs: List[Dict[str, Any]], ingestion_results: List[Dict[str, Any]], execution_time: float) -> Dict[str, Any]:
@@ -770,9 +784,7 @@ class Ingestor:
         end_time = time.time()
         execution_time = end_time - start_time
 
-        self.meta_update_high_watermark(results)
-
-        self.meta_deactivate_failed_tables(results)
+        self.meta_update_config_table(results, table_configs)
 
         self.meta_insert_audits(
             self.bootstrap["ingestion_id"],
