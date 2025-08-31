@@ -214,7 +214,7 @@ class Ingestor:
             print(f"[ERROR] --> Error creating table {destination_tbl}: {str(e)}")
             raise
 
-    def meta_update_config_table(self, ingestion_results: Dict[str, Any], table_configs: List[Dict[str, Any]]) -> None:
+    def meta_insert_configs(self, ingestion_results: Dict[str, Any], table_configs: List[Dict[str, Any]]) -> None:
         table_lookup = {item["DestinationTable"]: item for item in table_configs}
 
         for r in ingestion_results:
@@ -784,7 +784,7 @@ class Ingestor:
         end_time = time.time()
         execution_time = end_time - start_time
 
-        self.meta_update_config_table(results, table_configs)
+        self.meta_insert_configs(results, table_configs)
 
         self.meta_insert_audits(
             self.bootstrap["ingestion_id"],

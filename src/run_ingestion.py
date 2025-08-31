@@ -18,9 +18,11 @@ bootstrap = {
     "adx_database": "db1",
     "defender_resource_uri":"https://api.security.microsoft.com",
     "defender_hunting_api_url": "https://api.security.microsoft.com/api/advancedhunting/run",
-    "config_table": "vw_meta_LatestMigrationConfiguration",
+    "config_table": "meta_MigrationConfiguration",
+    "config_view": "vw_meta_LatestMigrationConfiguration",
     "audit_table": "meta_MigrationAudit",
     "chunk_audit_table": "meta_ChunkIngestionFailures",
+    "chunk_audit_view": "vw_meta_LatestChunkIngestionFailures",
     "clientId": os.getenv("AZURE_CLIENT_ID"),
     "clientSecret": os.getenv("AZURE_CLIENT_SECRET"),
     "tenantId": os.getenv("AZURE_TENANT_ID"),
@@ -43,7 +45,7 @@ def fetch_migration_config(kusto_client, bootstrap):
     
     response_config = kusto_client.execute(
         bootstrap["adx_database"], 
-        bootstrap["config_table"]
+        bootstrap["config_view"]
     )
     
     print(f"[INFO] --> Retrieved configuration for migration")
@@ -85,7 +87,7 @@ async def main():
     response_config = fetch_migration_config(kusto_client, bootstrap)
 
     table = response_config.primary_results[0]
-    table_configs = [row.to_dict() for row in table if (row["IsActive"] and not (row["LoadType"] == "Full" and row["HighWatermark"]))]
+    table_configs = [row.to_dict() for row in table if not (row["LoadType"] == "Full" and row["HighWatermark"])]
 
     print(table_configs)
 

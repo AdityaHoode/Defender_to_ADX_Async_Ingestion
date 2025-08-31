@@ -20,8 +20,7 @@ class Reprocessor(Ingestor):
         print("[FUNCTION] --> get_failed_chunks")
         
         base_query = f"""
-            {self.bootstrap["chunk_audit_table"]}
-            | where reprocess_success == false and isnotnull(low_watermark) and isnotnull(high_watermark)
+            {self.bootstrap["chunk_audit_view"]}
         """
         
         try:
@@ -89,26 +88,50 @@ class Reprocessor(Ingestor):
         
         return query
     
-    def meta_update_chunk_failures(
+    def meta_insert_successful_reprocess(
         self, 
-        reprocess_results: List[Dict[str, Any]]
+        reprocess_results: List[Dict[str, Any]],
+        failed_chunks: List[Dict[str, Any]]
     ) -> None:
         
-        print("[FUNCTION] --> meta_update_chunk_failures")
+        print("[FUNCTION] --> meta_insert_successful_reprocess")
+
+        table_lookup = {item["table"]: item for item in failed_chunks}
 
         for result in reprocess_results:
             if result.get("success"):
-                update_cmd = f"""
-                    .update table {self.bootstrap["chunk_audit_table"]} delete D append A <|
-                        let D = {self.bootstrap["chunk_audit_table"]}
-                        | where ingestion_id=='{result["ingestion_id"]}' and table=='{result["table"]}' and chunk_id=={result["chunk_id"]} and success==false;
-                        let A = {self.bootstrap["chunk_audit_table"]}
-                        | where ingestion_id=='{result["ingestion_id"]}' and table=='{result["table"]}' and chunk_id=={result["chunk_id"]} and success==false
-                        | extend reprocess_success=true;
-                """   
+                insert_cmd = f"""
+                    .set-or-append {self.bootstrap["chunk_audit_table"]} <|
+                    datatable (
+                        ingestion_id:string,
+                        ingestion_time:datetime,
+                        table:string,
+                        chunk_id:int,
+                        success:bool,
+                        records_count:int,
+                        records_processed:int,
+                        low_watermark:datetime,
+                        high_watermark:datetime,
+                        error:string,
+                        reprocess_success:bool
+                    )
+                    [
+                        '{table_lookup[result["table"]]["ingestion_id"]}',
+                        datetime('{table_lookup[result["table"]]["ingestion_time"]}'),
+                        '{result["table"]}',
+                        {table_lookup[result["table"]]["chunk_id"]},
+                        {str(table_lookup[result["table"]]["success"])},
+                        {result["records_count"]},
+                        {result["records_processed"]},
+                        datetime('{result["low_watermark"]}'),
+                        datetime('{result["high_watermark"]}'),
+                        '{"" if result["error"] is None else result["error"].replace("'", "''")}',
+                        true
+                    ]
+                """
 
                 try:
-                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], update_cmd)
+                    self.data_client.execute_mgmt(self.bootstrap["adx_database"], insert_cmd)
                     print("[INFO] --> Inserted reprocess audit records")
                 except Exception as e:
                     print(f"[ERROR] --> Error inserting reprocess audit records: {e}")
@@ -272,7 +295,7 @@ class Reprocessor(Ingestor):
             print(f"[INFO] --> valid_results: {valid_results}")
 
             if valid_results:
-                self.meta_update_chunk_failures(valid_results)
+                self.meta_insert_successful_reprocess(valid_results, failed_chunks)
             
             end_time = time.time()
             execution_time = end_time - start_time
