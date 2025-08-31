@@ -465,8 +465,7 @@ class Ingestor:
                         wait_time = max(0.1, base_wait_time + jitter)
                         thread_offset = (chunk_index % 10) * 0.1 
                         wait_time += thread_offset
-
-                        print(f"[WARNING] --> Timeout error during ingestion of chunk {chunk_index} to {destination_tbl}, attempt {retry_attempts}/{max_retries}: {str(e)}. Retrying in {wait_time} seconds...")
+                        print(f"[WARNING] --> Timeout error during ingestion of chunk {chunk_index} to {destination_tbl}, attempt {retry_attempts}/{max_retries}: {str(e)}. Retrying in {wait_time:.2f} seconds...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -565,8 +564,10 @@ class Ingestor:
                         retry_attempts += 1
                         if retry_attempts < max_retries:
                             retry_after = int(response.headers.get("Retry-After", "60"))
-                            print(f"[WARNING] --> Rate limited by Defender API. Retrying chunk {chunk_index} after {retry_after} seconds...")
-                            await asyncio.sleep(retry_after)
+                            jitter = random.uniform(0, 0.2) * retry_after
+                            wait_time = retry_after + jitter
+                            print(f"[WARNING] --> Rate limited by Defender API. Retrying chunk {chunk_index} after {wait_time:.2f} seconds...")
+                            await asyncio.sleep(wait_time)
                             continue
                         else:
                             error_text = await response.text()
