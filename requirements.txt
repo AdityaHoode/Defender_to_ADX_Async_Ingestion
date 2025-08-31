@@ -23,7 +23,7 @@ azure-kusto-ingest==5.0.5
 # pycparser==2.22
 # PyJWT==2.10.1
 # python-dateutil==2.9.0.post0
-# python-dotenv==1.1.1
+python-dotenv==1.1.1
 # requests==2.32.4
 # six==1.17.0
 # tenacity==9.1.2
