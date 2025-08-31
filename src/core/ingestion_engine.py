@@ -560,6 +560,7 @@ class Ingestor:
                             print(f"[WARNING] --> Rate limited by Defender API. Retrying chunk {chunk_index} after {retry_after} seconds...")
                             await asyncio.sleep(retry_after)
                         else:
+                            error_text = await response.text()
                             return {
                                 "table": destination_tbl,
                                 "success": False,
@@ -583,29 +584,29 @@ class Ingestor:
                             "error": f"API call failed: {response.status} - {error_text}",
                         }
                 
-            apijson = await response.json()
-            records = apijson.get("Results", [])
-            
-            if not records:
-                return {
-                    "table": destination_tbl,
-                    "success": True,
-                    "chunk_id": chunk_index,
-                    "records_count": 0,
-                    "records_processed": 0,
-                    "low_watermark": None,
-                    "high_watermark": None,
-                    "error": None
-                }
-            
-            chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
-            
-            if not chunk_result["success"]:
-                print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
-            else:
-                print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index}/{total_chunks} - {len(records):,} records")
+                    apijson = await response.json()
+                    records = apijson.get("Results", [])
+                    
+                    if not records:
+                        return {
+                            "table": destination_tbl,
+                            "success": True,
+                            "chunk_id": chunk_index,
+                            "records_count": 0,
+                            "records_processed": 0,
+                            "low_watermark": None,
+                            "high_watermark": None,
+                            "error": None
+                        }
+                    
+                    chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
+                    
+                    if not chunk_result["success"]:
+                        print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
+                    else:
+                        print(f"[INFO] --> Successfully processed {source_tbl} chunk {chunk_index}/{total_chunks} - {len(records):,} records")
 
-            return chunk_result
+                    return chunk_result
                 
         except Exception as e:
             print(f"[ERROR] --> Error processing chunk for {source_tbl} (chunk {chunk_index}): {str(e)}")

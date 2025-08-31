@@ -21,6 +21,7 @@ class Reprocessor(Ingestor):
         
         base_query = f"""
             {self.bootstrap["chunk_audit_view"]}
+            | where reprocess_success=false and isnotnull(low_watermark) and isnotnull(high_watermark)
         """
         
         try:
