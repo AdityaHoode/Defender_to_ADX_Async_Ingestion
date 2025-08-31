@@ -1,7 +1,7 @@
 import time
 import math
 import json
-import requests
+import random
 import urllib.parse
 from io import StringIO
 from datetime import timezone, datetime, timedelta
@@ -9,8 +9,8 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import asyncio
 import aiohttp
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
 from azure.kusto.data.data_format import DataFormat
@@ -414,12 +414,6 @@ class Ingestor:
         retry_attempts = 0
         backoff_factor = 2
         max_backoff = 60
-        retryable_exceptions = (
-            requests.exceptions.RequestException,
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            TimeoutError,
-        )
 
         result = {
             "chunk_id": chunk_index,
@@ -454,23 +448,37 @@ class Ingestor:
                 
                 return result
             
-            except retryable_exceptions as re:
-                retry_attempts += 1
-                if retry_attempts < max_retries:
-                    wait_time = min(backoff_factor ** retry_attempts, max_backoff)
-                    print(f"[WARNING] --> Transient error during ingestion of chunk {chunk_index} to {destination_tbl}, attempt {retry_attempts}/{max_retries}: {str(re)}. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
+            except Exception as e:
+                error_message = str(e).lower()
+                
+                if (
+                    type(e).__name__ == "KustoBlobError" 
+                    and ("timeout" in error_message or "timed out" in error_message)
+                ) or (
+                    "timeout" in error_message 
+                    or "timed out" in error_message
+                ):
+                    retry_attempts += 1
+                    if retry_attempts < max_retries:
+                        base_wait_time = min(backoff_factor ** retry_attempts, max_backoff)
+                        jitter = random.uniform(0, 0.5) * base_wait_time
+                        wait_time = max(0.1, base_wait_time + jitter)
+                        thread_offset = (chunk_index % 10) * 0.1 
+                        wait_time += thread_offset
+
+                        print(f"[WARNING] --> Timeout error during ingestion of chunk {chunk_index} to {destination_tbl}, attempt {retry_attempts}/{max_retries}: {str(e)}. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        result["success"] = False
+                        result["error"] = f"Max retries reached: {str(e)[:500]}"
+                        print(f"[ERROR] --> Ingestion failed for {destination_tbl} after {max_retries} attempts: {str(e)}")
+                        return result
                 else:
                     result["success"] = False
-                    result["error"] = f"Max retries reached: {str(re)[:500]}"
-                    print(f"[ERROR] --> Ingestion failed for {destination_tbl} after {max_retries} attempts: {str(re)}")
+                    result["error"] = str(e)[:500]
+                    print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
                     return result
-    
-            except Exception as e:
-                result["success"] = False
-                result["error"] = str(e)[:500]
-                print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
-                return result
 
     async def ingest_to_adx(self, records: List[Dict], chunk_index: int, destination_tbl: str, watermark_column: str) -> None:
         print("[FUNCTION] --> ingest_to_adx")
@@ -559,6 +567,7 @@ class Ingestor:
                             retry_after = int(response.headers.get("Retry-After", "60"))
                             print(f"[WARNING] --> Rate limited by Defender API. Retrying chunk {chunk_index} after {retry_after} seconds...")
                             await asyncio.sleep(retry_after)
+                            continue
                         else:
                             error_text = await response.text()
                             return {

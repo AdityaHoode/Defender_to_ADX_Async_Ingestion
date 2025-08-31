@@ -104,5 +104,7 @@ async def main():
     else:
         print("[INFO] --> No active tables found for migration")
 
+    ingestion_handler.thread_pool.shutdown(wait=True)
+
 if __name__ == "__main__":
     asyncio.run(main())
