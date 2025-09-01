@@ -25,11 +25,15 @@ bootstrap = {
 }
 
 async def main():
+
+    print("="*100)
+    print("STARTING CHUNK REPROCESSING")
+    print("="*100)
         
     reprocess_handler = Reprocessor(
         bootstrap=bootstrap,
         max_concurrent_tasks=5,
-        chunk_size=25000
+        chunk_size=2000
     )
 
     try:

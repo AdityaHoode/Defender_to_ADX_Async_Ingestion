@@ -21,7 +21,7 @@ class Reprocessor(Ingestor):
         
         base_query = f"""
             {self.bootstrap["chunk_audit_view"]}
-            | where reprocess_success=false and isnotnull(low_watermark) and isnotnull(high_watermark)
+            | where reprocess_success==false and isnotnull(low_watermark) and isnotnull(high_watermark)
         """
         
         try:
@@ -31,8 +31,11 @@ class Reprocessor(Ingestor):
             for row in response.primary_results[0]:
                 failed_chunks.append({
                     "ingestion_id": row["ingestion_id"],
+                    "ingestion_timestamp": row["ingestion_timestamp"],
                     "table": row["table"],
                     "chunk_id": row["chunk_id"],
+                    "success": row["success"],
+                    "records_count": row["records_count"],
                     "low_watermark": row["low_watermark"],
                     "high_watermark": row["high_watermark"],
                     "records_count": row["records_count"],
@@ -98,14 +101,15 @@ class Reprocessor(Ingestor):
         print("[FUNCTION] --> meta_insert_successful_reprocess")
 
         table_lookup = {item["table"]: item for item in failed_chunks}
-
+        print(f"[DEBUG] --> table_lookup: {table_lookup}")
+        print(f"[DEBUG] --> reprocess_results: {reprocess_results}")
         for result in reprocess_results:
             if result.get("success"):
                 insert_cmd = f"""
                     .set-or-append {self.bootstrap["chunk_audit_table"]} <|
                     datatable (
                         ingestion_id:string,
-                        ingestion_time:datetime,
+                        ingestion_timestamp:datetime,
                         table:string,
                         chunk_id:int,
                         success:bool,
@@ -118,11 +122,11 @@ class Reprocessor(Ingestor):
                     )
                     [
                         '{table_lookup[result["table"]]["ingestion_id"]}',
-                        datetime('{table_lookup[result["table"]]["ingestion_time"]}'),
+                        datetime('{table_lookup[result["table"]]["ingestion_timestamp"]}'),
                         '{result["table"]}',
                         {table_lookup[result["table"]]["chunk_id"]},
                         {str(table_lookup[result["table"]]["success"])},
-                        {result["records_count"]},
+                        {table_lookup[result["table"]]["records_count"]},
                         {result["records_processed"]},
                         datetime('{result["low_watermark"]}'),
                         datetime('{result["high_watermark"]}'),
@@ -130,7 +134,7 @@ class Reprocessor(Ingestor):
                         true
                     ]
                 """
-
+                print(f"[DEBUG] --> insert_cmd: {insert_cmd}")
                 try:
                     self.data_client.execute_mgmt(self.bootstrap["adx_database"], insert_cmd)
                     print("[INFO] --> Inserted reprocess audit records")
