@@ -80,13 +80,10 @@ class Reprocessor(Ingestor):
         high_watermark: datetime
     ) -> str:
         
-        low_watermark_str = low_watermark.isoformat()
-        high_watermark_str = high_watermark.isoformat()
-        
         query = (
             f"{source_table} "
-            f"| where {watermark_column} >= datetime('{low_watermark_str}') "
-            f"and {watermark_column} <= datetime('{high_watermark_str}') "
+            f"| where {watermark_column} >= datetime('{low_watermark}') "
+            f"and {watermark_column} <= datetime('{high_watermark}') "
             f"| sort by {watermark_column} asc"
         )
         
@@ -188,8 +185,8 @@ class Reprocessor(Ingestor):
                         "table": table_name,
                         "error": f"API call failed: {response.status} - {error_text}",
                         "records_processed": 0,
-                        "low_watermark": low_watermark.isoformat(),
-                        "high_watermark": high_watermark.isoformat(),
+                        "low_watermark": low_watermark,
+                        "high_watermark": high_watermark,
                     }
                 
                 apijson = await response.json()
@@ -202,8 +199,8 @@ class Reprocessor(Ingestor):
                         "chunk_id": chunk_id,
                         "table": table_name,
                         "records_processed": 0,
-                        "low_watermark": low_watermark.isoformat(),
-                        "high_watermark": high_watermark.isoformat(),
+                        "low_watermark": low_watermark,
+                        "high_watermark": high_watermark,
                         "error": "No records found in range"
                     }
                 
@@ -215,8 +212,8 @@ class Reprocessor(Ingestor):
                     "chunk_id": chunk_id,
                     "table": table_name,
                     "records_processed": ingest_result["records_processed"],
-                    "low_watermark": low_watermark.isoformat(),
-                    "high_watermark": high_watermark.isoformat(),
+                    "low_watermark": low_watermark,
+                    "high_watermark": high_watermark,
                     "error": ingest_result.get("error", None)
                 }
                 
@@ -236,8 +233,8 @@ class Reprocessor(Ingestor):
                 "table": table_name,
                 "error": str(e)[:500],
                 "records_processed": 0,
-                "low_watermark": low_watermark.isoformat(),
-                "high_watermark": high_watermark.isoformat(),
+                "low_watermark": low_watermark,
+                "high_watermark": high_watermark,
             }
 
     async def reprocess_failed_chunks(self) -> Dict[str, Any]:
