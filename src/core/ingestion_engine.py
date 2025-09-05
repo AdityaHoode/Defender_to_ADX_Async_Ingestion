@@ -298,7 +298,7 @@ class Ingestor:
             else:
                 chunk_results = 'dynamic([])'
             insert_values.append(
-                f'"{ingestion_id}", datetime({ingestion_start_time}), "{data["table"]}", {str(data["success"]).lower()}, '
+                f'"{ingestion_id}", datetime({ingestion_start_time}), "{data["folder"]}", "{data["table"]}", {str(data["success"]).lower()}, '
                 f'{data["records_processed"]}, {data["chunked"]}, {data["chunks_processed"]}, {data["chunks_failed"]}, '
                 f'{chunk_results}, "{error_val}"'
             )
@@ -306,7 +306,7 @@ class Ingestor:
 
         kql_command = f"""
         .set-or-append {self.bootstrap["audit_table"]} <|
-        datatable(ingestion_id:string, ingestion_timestamp: datetime, table: string, success: bool, records_processed: long, chunked: bool, chunks_processed: int, chunks_failed: int, chunk_results: dynamic, error: string)
+        datatable(ingestion_id:string, ingestion_timestamp: datetime, folder: string, table: string, success: bool, records_processed: long, chunked: bool, chunks_processed: int, chunks_failed: int, chunk_results: dynamic, error: string)
         [
         {insert_values_str}
         ]"""
@@ -328,7 +328,7 @@ class Ingestor:
                         error_val = '""' if r["error"] is None else str(r["error"]).replace('"', "")
                         insert_values.append(
                             f'"{ingestion_id}", datetime({ingestion_start_time}), '
-                            f'"{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
+                            f'"{r["folder"]}", "{r["table"]}", {r["chunk_id"]}, {str(r["success"]).lower()}, '
                             f'{r["records_count"]}, {r["records_processed"]}, '
                             f'datetime({low_watermark}), datetime({high_watermark}), "{error_val}", "false"'
                         )
@@ -337,7 +337,7 @@ class Ingestor:
         if insert_values != []:
             kql_command = f"""
             .set-or-append {self.bootstrap["chunk_audit_table"]} <|
-            datatable(ingestion_id:string, ingestion_time:datetime, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string, reprocess_success:bool)
+            datatable(ingestion_id:string, ingestion_time:datetime, folder:string, table:string, chunk_id:int, success:bool, records_count:int, records_processed:int, low_watermark:datetime, high_watermark:datetime, error:string, reprocess_success:bool)
             [
             {insert_values_str}
             ]"""
@@ -418,7 +418,7 @@ class Ingestor:
 
         return summary
 
-    def _sync_ingest_data(self, records: List[Dict], chunk_index: int, destination_tbl: str, low_watermark: str, high_watermark: str) -> None:
+    def _sync_ingest_data(self, records: List[Dict], chunk_index: int, destination_folder: str, destination_tbl: str, low_watermark: str, high_watermark: str) -> None:
         """Synchronous data ingestion - runs in thread pool"""
         max_retries = 5
         retry_attempts = 0
@@ -427,6 +427,7 @@ class Ingestor:
 
         result = {
             "chunk_id": chunk_index,
+            "folder": destination_folder,
             "table": destination_tbl,
             "success": False,
             "records_count": len(records),
@@ -489,7 +490,7 @@ class Ingestor:
                     print(f"[ERROR] --> Ingestion failed for {destination_tbl}: {str(e)}")
                     return result
 
-    async def ingest_to_adx(self, records: List[Dict], chunk_index: int, destination_tbl: str, watermark_column: str) -> None:
+    async def ingest_to_adx(self, records: List[Dict], chunk_index: int, destination_folder: str, destination_tbl: str, watermark_column: str) -> None:
         print("[FUNCTION] --> ingest_to_adx")
 
         try:
@@ -502,6 +503,7 @@ class Ingestor:
                 self._sync_ingest_data,
                 records,
                 chunk_index,
+                destination_folder,
                 destination_tbl,
                 low_watermark,
                 high_watermark
@@ -519,6 +521,7 @@ class Ingestor:
             
             return {
                 "chunk_id": chunk_index,
+                "folder": destination_folder,
                 "table": destination_tbl,
                 "success": False,
                 "records_count": len(records),
@@ -541,6 +544,7 @@ class Ingestor:
         print("-"*80)
         print("[FUNCTION] --> process_single_chunk")
         source_tbl = table_config["SourceTable"]
+        destination_folder = table_config["DestinationFolder"]
         destination_tbl = table_config["DestinationTable"]
         watermark_column = table_config["WatermarkColumn"]
 
@@ -582,6 +586,7 @@ class Ingestor:
                         else:
                             error_text = await response.text()
                             return {
+                                "folder": destination_folder,
                                 "table": destination_tbl,
                                 "success": False,
                                 "chunk_id": chunk_index,
@@ -594,6 +599,7 @@ class Ingestor:
                     elif response.status != 200:
                         error_text = await response.text()
                         return {
+                            "folder": destination_folder,
                             "table": destination_tbl,
                             "success": False,
                             "chunk_id": chunk_index,
@@ -609,6 +615,7 @@ class Ingestor:
                     
                     if not records:
                         return {
+                            "folder": destination_folder,
                             "table": destination_tbl,
                             "success": True,
                             "chunk_id": chunk_index,
@@ -619,7 +626,7 @@ class Ingestor:
                             "error": None
                         }
                     
-                    chunk_result = await self.ingest_to_adx(records, chunk_index, destination_tbl, watermark_column)
+                    chunk_result = await self.ingest_to_adx(records, chunk_index, destination_folder, destination_tbl, watermark_column)
                     
                     if not chunk_result["success"]:
                         print(f"[ERROR] --> Chunk ingestion failed for {source_tbl} chunk {chunk_index}/{total_chunks}: {chunk_result['error']}")
@@ -675,6 +682,7 @@ class Ingestor:
         """Process a single table with chunking support and better error isolation"""
         async with self.semaphore:
             source_tbl = table_config["SourceTable"]
+            destination_folder = table_config["DestinationTable"]
             destination_tbl = table_config["DestinationTable"]
             load_type = table_config['LoadType']
             watermark_column = table_config["WatermarkColumn"]
@@ -700,6 +708,7 @@ class Ingestor:
                 if total_records == 0:
                     print(f"[INFO] --> No records found for {source_tbl}")
                     return {
+                        "folder": destination_folder,
                         "table": destination_tbl,
                         "success": True,
                         "records_count": 0, 
@@ -718,6 +727,7 @@ class Ingestor:
                     result = await self.process_single_chunk(session, table_config, base_query, 1, num_chunks, True)
                     
                     return {
+                        "folder": destination_folder,
                         "table": result["table"],
                         "success": result["success"],
                         "records_processed": result["records_processed"],
@@ -750,6 +760,7 @@ class Ingestor:
                     ]
                     
                     return {
+                        "folder": destination_folder,
                         "table": destination_tbl,
                         "success": failed_chunks == 0,
                         "records_processed": total_records_processed,
@@ -763,7 +774,8 @@ class Ingestor:
             except Exception as e:
                 print(f"[ERROR] --> Error processing table {source_tbl}: {str(e)}")
                 return {
-                    "table": source_tbl,
+                    "folder": destination_folder,
+                    "table": destination_tbl,
                     "success": False,
                     "records_processed": 0,
                     "chunks_processed": 0,
