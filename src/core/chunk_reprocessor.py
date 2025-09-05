@@ -211,7 +211,7 @@ class Reprocessor(Ingestor):
                         "error": "No records found in range"
                     }
                 
-                ingest_result = await self.ingest_to_adx(records, chunk_id, table_name, watermark_column)
+                ingest_result = await self.ingest_to_adx(records, chunk_id, table_folder, table_name, watermark_column)
                 
                 result = {
                     "ingestion_id": failed_chunk["ingestion_id"],
