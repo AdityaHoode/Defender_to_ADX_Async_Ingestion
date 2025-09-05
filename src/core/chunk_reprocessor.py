@@ -32,6 +32,7 @@ class Reprocessor(Ingestor):
                 failed_chunks.append({
                     "ingestion_id": row["ingestion_id"],
                     "ingestion_timestamp": row["ingestion_timestamp"],
+                    "folder": row["folder"],
                     "table": row["table"],
                     "chunk_id": row["chunk_id"],
                     "success": row["success"],
@@ -108,6 +109,7 @@ class Reprocessor(Ingestor):
                     datatable (
                         ingestion_id:string,
                         ingestion_timestamp:datetime,
+                        folder:string,
                         table:string,
                         chunk_id:int,
                         success:bool,
@@ -121,6 +123,7 @@ class Reprocessor(Ingestor):
                     [
                         '{table_lookup[result["table"]]["ingestion_id"]}',
                         datetime('{table_lookup[result["table"]]["ingestion_timestamp"]}'),
+                        '{table_lookup[result["table"]]["folder"]}',
                         '{result["table"]}',
                         {table_lookup[result["table"]]["chunk_id"]},
                         {str(table_lookup[result["table"]]["success"])},
@@ -151,6 +154,7 @@ class Reprocessor(Ingestor):
         print("-"*60)
         print(f"[FUNCTION] --> reprocess_single_chunk")
         
+        table_folder = failed_chunk["folder"]
         table_name = failed_chunk["table"]
         chunk_id = failed_chunk["chunk_id"]
         low_watermark = failed_chunk["low_watermark"]
@@ -183,6 +187,7 @@ class Reprocessor(Ingestor):
                     return {
                         "success": False,
                         "chunk_id": chunk_id,
+                        "folder": table_folder,
                         "table": table_name,
                         "error": f"API call failed: {response.status} - {error_text}",
                         "records_processed": 0,
@@ -198,6 +203,7 @@ class Reprocessor(Ingestor):
                     return {
                         "success": True,
                         "chunk_id": chunk_id,
+                        "folder": table_folder,
                         "table": table_name,
                         "records_processed": 0,
                         "low_watermark": low_watermark,
@@ -211,6 +217,7 @@ class Reprocessor(Ingestor):
                     "ingestion_id": failed_chunk["ingestion_id"],
                     "success": ingest_result["success"],
                     "chunk_id": chunk_id,
+                    "folder": table_folder,
                     "table": table_name,
                     "records_processed": ingest_result["records_processed"],
                     "low_watermark": low_watermark,
@@ -231,6 +238,7 @@ class Reprocessor(Ingestor):
             return {
                 "success": False,
                 "chunk_id": chunk_id,
+                "folder": table_folder,
                 "table": table_name,
                 "error": str(e)[:500],
                 "records_processed": 0,
