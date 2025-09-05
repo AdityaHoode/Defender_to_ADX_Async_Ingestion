@@ -141,7 +141,10 @@ class Ingestor:
     
     def build_base_kql_query(self, source_tbl: str, load_type: str, watermark_column: str, high_watermark: datetime) -> str:        
         if load_type == "Full" or not high_watermark:
-            return source_tbl
+            if watermark_column == "Watermark_IngestionTime":
+                return f"{source_tbl} | extend {watermark_column} = ingestion_time()"
+            else:
+                return source_tbl
         else:
             if watermark_column == "Watermark_IngestionTime":
                 return f"{source_tbl} | extend {watermark_column} = ingestion_time() | where {watermark_column} > datetime('{high_watermark}')"
