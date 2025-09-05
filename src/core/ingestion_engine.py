@@ -143,13 +143,15 @@ class Ingestor:
         if load_type == "Full" or not high_watermark:
             return source_tbl
         else:
-            formatted_ts = high_watermark.isoformat()
-            return f"{source_tbl} | where {watermark_column} > datetime('{formatted_ts}')"
+            if watermark_column == "Watermark_IngestionTime":
+                return f"{source_tbl} | extend {watermark_column} = ingestion_time() | where {watermark_column} > datetime('{high_watermark}')"
+            else:
+                return f"{source_tbl} | where {watermark_column} > datetime('{high_watermark}')"
     
     def build_chunked_kql_query(self, base_query: str, watermark_column: str, chunk_index: int, chunk_size: int) -> str:
         start_rownum = (chunk_index-1) * chunk_size
         end_rownum = start_rownum + chunk_size
-        return f"{base_query} | sort by {watermark_column} asc | extend rownum = row_number() | where rownum between ({start_rownum+1} .. {end_rownum})"
+        return f"{base_query} | sort by {watermark_column} asc | extend rownum = row_number() | where rownum between ({start_rownum+1} .. {end_rownum}) | project-away rownum"
 
     async def get_record_count(self, session: aiohttp.ClientSession, base_query: str) -> int:
         count_query = f"{base_query} | count"
