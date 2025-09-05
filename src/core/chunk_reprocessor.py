@@ -82,9 +82,10 @@ class Reprocessor(Ingestor):
         
         query = (
             f"{source_table} "
-            f"| where {watermark_column} >= datetime('{low_watermark}') "
-            f"and {watermark_column} <= datetime('{high_watermark}') "
-            f"| sort by {watermark_column} asc"
+            + (f"| extend {watermark_column} = ingestion_time() " if watermark_column == "Watermark_IngestionTime" else "")
+            + f"| where {watermark_column} >= datetime('{low_watermark}') "
+            + f"and {watermark_column} <= datetime('{high_watermark}') "
+            + f"| sort by {watermark_column} asc"
         )
         
         return query
