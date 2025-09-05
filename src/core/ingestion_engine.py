@@ -198,9 +198,9 @@ class Ingestor:
             print(f"[ERROR] --> Error calculating chunks: {e}")
             return 0, 0
 
-    def ensure_table_exists(self, destination_tbl: str, watermark_column: str) -> None:
+    def ensure_table_exists(self, destination_folder: str, destination_tbl: str, watermark_column: str) -> None:
         try:
-            create_table_cmd = f".create-merge table {destination_tbl} ({watermark_column}: datetime, RawData: dynamic)"
+            create_table_cmd = f".create-merge table {destination_tbl} ({watermark_column}: datetime, RawData: dynamic) with (folder = '{destination_folder}')"
             self.data_client.execute(self.bootstrap["adx_database"], create_table_cmd)
             print(f"[INFO] --> Table {destination_tbl} created/verified")
 
@@ -228,6 +228,7 @@ class Ingestor:
                     max_high_watermark = r["chunk_results"][-1]["high_watermark"] if r["chunk_results"][-1]["high_watermark"] else 'null'
 
                     source_table = table_lookup.get(r["table"])["SourceTable"]
+                    destination_folder = table_lookup.get(r["table"])["DestinationFolder"]
                     watermark_column = table_lookup.get(r["table"])["WatermarkColumn"]
                     load_type = table_lookup.get(r["table"])["LoadType"]
                     
@@ -236,6 +237,7 @@ class Ingestor:
                             .set-or-append {self.bootstrap['config_table']} <|
                             datatable (
                                 SourceTable: string,
+                                DestinationFolder: string,
                                 DestinationTable: string,
                                 WatermarkColumn: string,
                                 LastRefreshedTime: datetime,
@@ -245,6 +247,7 @@ class Ingestor:
                             )
                             [
                                 '{source_table}',
+                                '{destination_folder}',
                                 '{r["table"]}',
                                 '{watermark_column}',
                                 '{self.bootstrap["ingestion_start_time"]}',
@@ -258,6 +261,7 @@ class Ingestor:
                             .set-or-append {self.bootstrap['config_table']} <|
                             datatable (
                                 SourceTable: string,
+                                DestinationFolder: string,
                                 DestinationTable: string,
                                 WatermarkColumn: string,
                                 LastRefreshedTime: datetime,
@@ -267,6 +271,7 @@ class Ingestor:
                             )
                             [
                                 '{source_table}',
+                                '{destination_folder}',
                                 '{r["table"]}',
                                 '{watermark_column}',
                                 '{self.bootstrap["ingestion_start_time"]}',
@@ -784,6 +789,7 @@ class Ingestor:
                 await loop.run_in_executor(
                     self.thread_pool,
                     self.ensure_table_exists,
+                    config["DestinationFolder"],
                     config["DestinationTable"],
                     config["WatermarkColumn"]
                 )
