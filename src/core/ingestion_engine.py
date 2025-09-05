@@ -682,7 +682,7 @@ class Ingestor:
         """Process a single table with chunking support and better error isolation"""
         async with self.semaphore:
             source_tbl = table_config["SourceTable"]
-            destination_folder = table_config["DestinationTable"]
+            destination_folder = table_config["DestinationFolder"]
             destination_tbl = table_config["DestinationTable"]
             load_type = table_config['LoadType']
             watermark_column = table_config["WatermarkColumn"]
