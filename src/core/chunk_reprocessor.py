@@ -100,8 +100,7 @@ class Reprocessor(Ingestor):
         print("[FUNCTION] --> meta_insert_successful_reprocess")
 
         table_lookup = {item["table"]: item for item in failed_chunks}
-        print(f"[DEBUG] --> table_lookup: {table_lookup}")
-        print(f"[DEBUG] --> reprocess_results: {reprocess_results}")
+
         for result in reprocess_results:
             if result.get("success"):
                 insert_cmd = f"""
@@ -135,7 +134,6 @@ class Reprocessor(Ingestor):
                         true
                     ]
                 """
-                print(f"[DEBUG] --> insert_cmd: {insert_cmd}")
                 try:
                     self.data_client.execute_mgmt(self.bootstrap["adx_database"], insert_cmd)
                     print("[INFO] --> Inserted reprocess audit records")
