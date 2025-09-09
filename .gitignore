@@ -1,5 +1,5 @@
 .env
 sandbox
 src/test.py
-venv
+.venv
 src/core/__pycache__
